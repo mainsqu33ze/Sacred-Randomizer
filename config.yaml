@@ -1,0 +1,62 @@
+# FE8 Randomizer Configuration
+# Set to true to enable each randomization feature.
+
+seed: 42  # 0 = random (uses system time)
+
+class_randomization:
+  shuffle: true             # Shuffle classes among playable characters
+  randomize_stats: false    # Shuffle base stats across classes within same tier
+  preserve_base: true       # Shuffle existing stats vs assign random(0,20)
+  cross_tier_scramble: false  # Allow shuffling stats across all tiers together
+  omit_classes: []          # List of class names to exclude from randomization case insensitive (e.g. [MANAKETE])
+
+growth_randomization:
+  character: pool      # false, 'shuffle', 'random', or 'pool'
+  class: false            # false, 'shuffle', 'random', or 'pool'
+  min: 0                  # Minimum growth rate (for 'random'/'pool' modes)
+  max: 100                # Maximum growth rate (for 'random'/'pool' modes)
+  mean: null              # Mean for 'random' normal distribution (null = original value)
+  stddev: 10              # Standard deviation for 'random' normal distribution
+  pool_total: 315        # Total growth pool for 'pool' mode (null = use original total)
+
+base_stat_randomization:
+  character: random        # false, 'shuffle', 'random', or a multiplier (e.g., 1.5)
+  class: shuffle            # false, 'shuffle', 'random', or a multiplier (e.g., 1.5)
+  cross_tier_scramble: false  # 'shuffle' mode: allow swapping stats across all tiers together
+  mean: null                # Mean for 'random' mode (null = use original stat value)
+  stddev: 3                 # Standard deviation for 'random' mode
+
+item_randomization:
+  enabled: true             # Give units weapons matching their new class
+
+weapon_randomization:
+  enabled: random           # false, or truthy (randomizes all 4 weapon stats)
+  might: true               # Per-stat toggle; false to skip, or override with multiplier
+  hit: true
+  weight: true
+  crit: true
+  mean: null                # Mean for 'random' mode (null = use original value)
+  stddev: 5                 # Global standard deviation
+  might_stddev: 3           # Per-stat stddev overrides
+  hit_stddev: 20
+  weight_stddev: 3
+  crit_stddev: 5
+  min_might: 1
+  max_might: 20
+  min_hit: 30
+  max_hit: 120
+  min_weight: 1
+  max_weight: 20
+  min_crit: 0
+  max_crit: 30
+
+weapon_effects:
+  enabled: 10            # false, or percent chance per weapon (e.g., 25)
+  poison: 4              # true/weight (higher = more likely), false to exclude
+  nosferatu: 3
+  eclipse: 1                # weight 1 (very rare)
+  devil: 5
+  stone: 1
+
+affinity_randomization:
+  enabled: shuffle          # Randomize character affinities
