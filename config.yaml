@@ -64,6 +64,6 @@ affinity_randomization:
   enabled: shuffle          # Randomize character affinities
 
 promotion_items:
-  enabled: false            # Make all promotion items function as Master Seals
+  enabled: true            # Make all promotion items function as Master Seals
   master_seal_universal: true   # Every unpromoted class can use them; false = vanilla restrictions
   replace_distribution: true    # Replace drops/chests with Master Seals; false = keep original items

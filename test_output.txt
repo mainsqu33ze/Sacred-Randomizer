@@ -1,0 +1,53 @@
+=== FE8 Randomizer Report ===
+Seed: 42
+
+=== Class Changes ===
+  EIRIKA: EPHRAIM_LORD -> PEGASUS_KNIGHT
+  SETH: EIRIKA_LORD -> SWORDMASTER_F
+  GILLIAM: EPHRAIM_MASTER_LORD -> SHAMAN_F
+  FRANZ: EIRIKA_MASTER_LORD -> ARMOR_KNIGHT_F
+  MOULDER: CAVALIER -> PIRATE
+  VANESSA: CAVALIER_F -> MYRMIDON_F
+  ROSS: PALADIN -> PUPIL
+  NEIMI: PALADIN_F -> MERCENARY
+  COLM: ARMOR_KNIGHT -> THIEF
+  GARCIA: ARMOR_KNIGHT_F -> DANCER
+  INNES: GENERAL -> PALADIN_F
+  LUTE: GENERAL_F -> ARMOR_KNIGHT
+  NATASHA: THIEF -> WYVERN_RIDER
+  CORMAG: MANAKETE -> EPHRAIM_LORD
+  EPHRAIM: MERCENARY -> PRIEST
+  FORDE: MERCENARY_F -> MAGE
+  KYLE: HERO -> FIGHTER
+  AMELIA: HERO_F -> JOURNEYMAN
+  ARTUR: MYRMIDON -> MAGE_F
+  GERIK: MYRMIDON_F -> TROUBADOUR
+  TETHYS: SWORDMASTER -> MYRMIDON
+  MARISA: SWORDMASTER_F -> BRIGAND
+  EWAN: ASSASSIN_F -> MANAKETE_MYRRH
+  LARACHEL: ARCHER -> CAVALIER
+  DOZLA: ARCHER_F -> DRUID
+  RENNAC: SNIPER_F -> BERSERKER
+  DUESSEL: RANGER -> WYVERN_KNIGHT
+  MYRRH: RANGER_F -> ARCHER_F
+  KNOLL: WYVERN_RIDER -> CAVALIER_F
+  JOSHUA: WYVERN_RIDER_F -> SHAMAN
+  SYRENE: WYVERN_LORD -> VALKYRIE
+  TANA: WYVERN_LORD_F -> WYVERN_RIDER_F
+
+=== Weapon Effect Changes ===
+  Shamshir (Sword): (none) -> Devil
+  Toxin Lance (Lance): Poison -> Nosferatu
+  Hand Axe (Axe): (none) -> Devil
+  Brave Bow (Bow): (none) -> Poison
+  Elfire (Anima): (none) -> Poison
+  Lightning (Light): (none) -> Poison
+  Shine (Light): (none) -> Poison
+  Flux (Dark): (none) -> Nosferatu
+  Fortify (Staff): (none) -> Devil
+  Rescue (Staff): (none) -> Poison
+  Beacon Bow (Bow): (none) -> Devil
+  Dragonspear (Lance): (none) -> Poison
+
+=== Event Item Changes ===
+  (none)

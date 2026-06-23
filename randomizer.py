@@ -810,35 +810,46 @@ def randomize_promotion_items(rom, config):
             data[off:off + 0x41] = bytes(0x41)
             total += 1
 
-        # Phase 2: Fill Master Seal's item-specific table with promo JID + 1 for each class
-        # For class_id 0-20: use jidPromotion from class data (or 0x01 if no valid promo)
-        # For class_id > 20: fill with 0x01 (no promotion for monsters)
-        ms_off = rom_offset(master_seal_table_addr)
-        data[ms_off:ms_off + 0x41] = bytes([0x01] * 0x41)
+        # Phase 2: Fill ALL promotion item byte-per-class tables (0x41 bytes, classes 0-64).
+        # Previously only filled Master Seal (0x88); now also fills items 0x64-0x68 so
+        # FE Builder (which reads these tables directly) sees universal permissions.
+        MAX_TABLE_CLS = 0x40
         from fe8rom import CharacterData, ClassData
-        for cls in range(1, 99):
-            try:
-                cd = ClassData(rom, cls)
-                promo_jid = cd.jidPromotion
-                if promo_jid > 0 and promo_jid != cls:
-                    byte_val = promo_jid + 1
-                else:
+        for item_id, table_addr in PROMO_ITEM_TABLES.items():
+            if item_id not in PROMOTION_ITEM_IDS:
+                continue
+            tbl_off = rom_offset(table_addr)
+            data[tbl_off:tbl_off + 0x41] = bytes([0x01] * 0x41)
+            for cls in range(1, MAX_TABLE_CLS + 1):
+                try:
+                    cd = ClassData(rom, cls)
+                    promo_jid = cd.jidPromotion
+                    if promo_jid > 0 and promo_jid != cls:
+                        byte_val = promo_jid + 1
+                    else:
+                        byte_val = 0x01
+                except Exception:
                     byte_val = 0x01
-            except Exception:
-                byte_val = 0x01
-            # Write byte at table offset (may overflow > 0x40 into adjacent table space, which is safe)
-            pos = ms_off + cls
-            if pos < len(data):
-                data[pos] = byte_val
+                pos = tbl_off + cls
+                if pos < len(data):
+                    data[pos] = byte_val
         total += 1
 
-        # Phase 3: Make the function pointer table route all promo items to Master Seal's stub
-        # Find the stub address for Master Seal
+        # Phase 3: Route items 0x64-0x68 to use 0x088ADF76 via function table
+        # Entries 2-6 (items 0x64-0x68) keep their ORIGINAL handler addresses so
+        # FE Builder can trace them to their handler literals (redirected in Phase 5
+        # from old byte-per-class tables to 0x088ADF76).
+        # Entries 0-1 (items 0x62-0x63, not promotion items) still redirect to
+        # Master Seal stub for backward compatibility.
         ft_off = rom_offset(PROMO_FUNCTION_TABLE_ADDR)
         ms_stub_addr = struct.unpack_from('<I', data, ft_off + 7 * 4)[0]
-        # Change entries 0-6 to point to the same stub
         for i in range(7):
-            struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
+            item_id = 0x62 + i
+            if item_id in PROMOTION_ITEM_IDS:
+                # Keep original handler address — FE Builder traces it to its literal
+                continue
+            else:
+                struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
             total += 1
 
         # Phase 4: Modify class-specific tables so Master Seal works for classes 0-19
@@ -872,9 +883,69 @@ def randomize_promotion_items(rom, config):
         struct.pack_into('<I', data, cf_off + 20 * 4, ms_stub_addr)
         total += 1
 
+        # Phase 5: Redirect ALL use_eff handler literal pools to 0x088ADF76
+        # The main use_eff=0x2D handler at 0x080293E8 loads its table from 0x08029408.
+        # Sub-dispatch handlers at 0x080293C4 (use_eff 0x2E), 0x080293CC (use_eff 0x2F),
+        # and 0x080293D4 (use_eff 0x20) each have their own literals for old lists:
+        #   0x080293C8 → 0x088ADFA4 (item 0x98's old count-1 list)
+        #   0x080293D0 → 0x088ADFA6 (item 0x99's old count-1 list)
+        #   0x080293D8 → 0x088ADF96 (item 0x8A's old count-2 list)
+        #   0x080293E0 → 0x088ADFA3 (unused old list)
+        # Vanilla 0x08029408 → 0x088ADF9E (3-entry list: BRIGAND,PIRATE,THIEF).
+        # All redirect to the 31-entry list at 0x088ADF76.
+        ALL_UE_LITERALS = [
+            0x080291D0,  # pre-dispatch 0x98 check (LDR at 0x080291CC) - dead, overwritten by next
+            0x08029214,  # pre-dispatch 0x98/0x99 check (LDR at 0x080291D4) - actual value used
+            0x08029398,  # sub-dispatch use_eff 0x19 literal (item 0x64 old handler)
+            0x080293A0,  # sub-dispatch use_eff 0x1A literal (item 0x65 old handler)
+            0x080293A8,  # sub-dispatch use_eff 0x1B literal (item 0x66 old handler)
+            0x080293B0,  # sub-dispatch use_eff 0x1C literal (item 0x67 old handler)
+            0x080293B8,  # sub-dispatch use_eff 0x1D literal (item 0x68 old handler)
+            0x080293C8,  # use_eff 0x2E sub-dispatch literal (item 0x98 old handler)
+            0x080293D0,  # use_eff 0x2F sub-dispatch literal (item 0x99 old handler)
+            0x080293D8,  # use_eff 0x20 sub-dispatch literal (item 0x8A old handler)
+            0x080293E0,  # use_eff 0x2E/0x2F shared sub-dispatch literal
+            0x08029408,  # use_eff 0x2D main handler literal (Master Seal)
+        ]
+        for lit_addr in ALL_UE_LITERALS:
+            lit_off = rom_offset(lit_addr)
+            old_val = struct.unpack_from('<I', data, lit_off)[0]
+            if old_val != 0x088ADF76:
+                struct.pack_into('<I', data, lit_off, 0x088ADF76)
+                total += 1
+        print(f"  Redirected {len(ALL_UE_LITERALS)} use_eff handler literal(s) to 0x088ADF76")
+
+        # Phase 5b: Replace invalid JIDs (0x7E=126, 0x7F=127) in the 31-entry list at 0x088ADF76
+        # with lord class IDs so EPHRAIM_LORD and EIRIKA_LORD can use Master Seal.
+        UE_LIST = 0x088ADF76
+        ue_off = rom_offset(UE_LIST)
+        added = 0
+        for jid_to_add in (0x01, 0x02):
+            for scan_i in range(ue_off, ue_off + 64):
+                if data[scan_i] == 0x00:
+                    break
+                if data[scan_i] in (0x7E, 0x7F) and data[scan_i] != jid_to_add:
+                    data[scan_i] = jid_to_add
+                    added += 1
+                    break
+        if added:
+            total += 1
+            print(f"  Replaced {added} invalid JID(s) in use_eff list with lord classes")
+
         print("Applied Master Seal universal promotion")
 
-    # Phase 6: Replace promotion items in UD arrays
+    # Phase 6: Force use_eff=0x2D on ALL promotion items unconditionally
+    # This ensures they all go through the 0x2D handler (checks 0x088ADF76),
+    # regardless of the replace_distribution setting.
+    ms_item_off = rom_offset(ITEM_TABLE_ADDR) + MASTER_SEAL_ITEM_ID * ITEM_DATA_SIZE
+    ms_use_eff = data[ms_item_off + 0x1E]
+    for item_id in PROMOTION_ITEM_IDS:
+        dst_off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+        data[dst_off + 0x1E] = ms_use_eff
+        total += 1
+    print(f"Set use_eff=0x{ms_use_eff:02X} for {len(PROMOTION_ITEM_IDS)} promotion items")
+
+    # Phase 7: Replace promotion items in UD arrays
     if rules.get('replace_distribution', True):
         replaced = 0
         for ud_offset, _ in _scan_ud_arrays(rom):
@@ -892,7 +963,7 @@ def randomize_promotion_items(rom, config):
         if replaced:
             print(f"Replaced {replaced} promotion item(s) with Master Seal in unit definitions")
 
-        # Phase 7: Copy Master Seal's item data to other promotion items
+        # Phase 8: Copy Master Seal's item data to other promotion items
         # This makes items 0x62-0x68 look identical to Master Seal (same icon, name, effect)
         ms_item_off = rom_offset(ITEM_TABLE_ADDR) + MASTER_SEAL_ITEM_ID * ITEM_DATA_SIZE
         ms_item_data = data[ms_item_off:ms_item_off + ITEM_DATA_SIZE]
@@ -908,6 +979,28 @@ def randomize_promotion_items(rom, config):
             data[dst_off + 6] = item_id
             total += 1
         print(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
+
+        # Phase 9: Replace promotion items in GiveItem event commands
+        # Scans entire ROM data section for GiveItem (0x1E) event commands
+        # with slot 0-3 and replaces any promotion item with Master Seal 0x88.
+        ev_replaced = 0
+        lo = 0x0800000  # file offset for GBA address 0x08800000
+        hi = min(0x1000000, len(data))  # end of ROM data
+        pos = lo
+        while pos + 2 < hi:
+            pos = data.find(b'\x1E', pos, hi)
+            if pos == -1:
+                break
+            slot = data[pos + 1]
+            item_id = data[pos + 2]
+            if 0 <= slot <= 3 and item_id in PROMOTION_ITEM_IDS:
+                if data[pos + 2] != MASTER_SEAL_ITEM_ID:
+                    data[pos + 2] = MASTER_SEAL_ITEM_ID
+                    ev_replaced += 1
+            pos += 1
+        if ev_replaced:
+            total += 1
+            print(f"Replaced {ev_replaced} promotion item(s) with Master Seal in GiveItem events")
 
     return total
 
