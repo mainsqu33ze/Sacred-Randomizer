@@ -858,10 +858,10 @@ def randomize_promotion_items(rom, config):
                     promo_jid = 0
 
             off = rom_offset(table_addr)
-            # Set all promotion item bytes to promo_jid + 1 (so return = promo_jid)
-            # This makes any old promotion item act as Master Seal via the class-specific path
             byte_val = promo_jid + 1 if promo_jid > 0 and promo_jid != cls else 0x01
             for item_id in [MASTER_SEAL_ITEM_ID] + sorted(PROMOTION_ITEM_IDS):
+                if item_id > 0x69:
+                    continue
                 data[off + item_id] = byte_val
             total += 1
 
@@ -871,12 +871,6 @@ def randomize_promotion_items(rom, config):
         cf_off = rom_offset(PROMO_CLASS_FUNCTION_TABLE)
         struct.pack_into('<I', data, cf_off + 20 * 4, ms_stub_addr)
         total += 1
-
-        # Phase 5: Zero out the remaining entries in the function pointer table
-        # (items 0x6A-0x74) so they can't accidentally become promotion items
-        for i in range(8, 19):
-            struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
-            total += 1
 
         print("Applied Master Seal universal promotion")
 
