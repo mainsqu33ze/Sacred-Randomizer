@@ -33,6 +33,8 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
 - **Manakete inventory**: replaces all 4 item slots with `[Dragonstone(0xAA), Vulnerary(0x6C), Vulnerary(0x6C), 0]`.
 - **Weapon effects**: filters match item pool filters (excludes monster/story). Skips staves. Already-affected weapons may be overwritten.
 - **Growth pool** (`_distribute_growth_pool`): 7 random weights normalized to `pool_total`, clamped to min/max.
+- **Item mode**: `mode: random` (default) picks random weapons from pools for invalid class-weapon combos. `mode: shuffle` permutes all weapon items across UD arrays.
+- **Event items** (`randomize_events: true`): scans for GiveItem (`0x1E`) event commands in chapter data range (`0x088B0000-0x088CFFFF`). Validates slot 0-3 and item_id 0x01-0xBF. Replaces weapon-type items with random picks from weapon pools. Non-weapons, monster-blocked, and story-exclusive items are preserved. Does NOT run in shuffle mode.
 
 ## UD array scanner gotchas
 - `_scan_ud_arrays` searches for event command bytes `{0x40..0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4}` + pointer pattern in ROM data

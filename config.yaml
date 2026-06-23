@@ -28,6 +28,8 @@ base_stat_randomization:
 
 item_randomization:
   enabled: true             # Give units weapons matching their new class
+  mode: random              # 'random' (pick random weapons from pools) or 'shuffle' (permute existing items)
+  randomize_events: false   # Randomize items given via GiveItem event commands
 
 weapon_randomization:
   enabled: random           # false, or truthy (randomizes all 4 weapon stats)

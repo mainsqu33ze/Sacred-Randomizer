@@ -2,3 +2,4 @@
 _test_*.gba
 *_randomized.gba
 *.GBA
+scripts/_tmp_chapter_dump.py

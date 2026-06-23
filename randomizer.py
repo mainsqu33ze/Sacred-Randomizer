@@ -1,6 +1,6 @@
 import random
 import struct
-from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools
+from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE
 
 PLAYABLE_PIDS = set(range(PID.EIRIKA, PID.TANA + 1))
 PLAYABLE_PLAYABLE_PIDS = {
@@ -488,6 +488,110 @@ def _pick_weapon_for_type(rom, weapon_pools, char_ranks):
     return random.choice(candidates)[1]
 
 
+def _scan_giveitem_events(rom):
+    """Yield (offset, item_id) for GiveItem (0x1E) commands in chapter data range.
+    
+    Filters: slot must be 0-3, item_id must be a valid weapon (1-0xC0, 
+    excluding monster/story items). Only scans 0x088B0000-0x088CFFFF.
+    """
+    data = rom.data
+    lo = 0x8B0000
+    hi = 0x8D0000
+    pos = lo
+    seen = set()
+    while True:
+        pos = data.find(b'\x1E', pos)
+        if pos == -1 or pos >= hi:
+            break
+        if pos + 2 >= len(data):
+            break
+        slot = data[pos + 1]
+        item_id = data[pos + 2]
+        if 0 <= slot <= 3 and 0 < item_id < 0xC0:
+            if pos not in seen:
+                seen.add(pos)
+                yield pos, item_id
+        pos += 1
+
+
+def randomize_event_items(rom, modified_pids):
+    """Randomize items given via GiveItem event commands in chapter data.
+    
+    Replaces weapon items with random weapons from the pools. Non-weapon items
+    (vulneraries, keys, promo items) are left as-is. Skips story-exclusive
+    and monster-blocked items.
+    """
+    weapon_pools = build_weapon_pools(rom)
+    data = rom.data
+    patched = 0
+
+    for offset, item_id in _scan_giveitem_events(rom):
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+
+        idd = ItemData(rom, item_id)
+        if not idd.is_weapon():
+            continue
+
+        candidates = []
+        for t in range(8):
+            if weapon_pools[t]:
+                for wid, rank in weapon_pools[t]:
+                    candidates.append(wid)
+        if not candidates:
+            continue
+
+        new_item_id = random.choice(candidates)
+        if new_item_id != item_id:
+            data[offset + 2] = new_item_id
+            patched += 1
+
+    return patched
+
+
+def _shuffle_unit_items(rom):
+    """Shuffle all non-zero weapon items across UD arrays.
+    
+    Collects all weapon items from UD arrays, permutes them, and writes back.
+    Non-weapon items and empty slots are preserved in place.
+    Manakete inventories are excluded from shuffle (keep dragonstone).
+    """
+    data = rom.data
+    items_by_entry = []
+
+    for ud_offset, count in _scan_ud_arrays(rom):
+        arr_pos = ud_offset
+        for entry_idx in range(count):
+            if arr_pos + UNIT_DEF_SIZE > len(data):
+                break
+            chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+            char_idx = chunk[0]
+            if char_idx == 0 or char_idx > 114:
+                arr_pos += UNIT_DEF_SIZE
+                continue
+            cd = CharacterData(rom, char_idx)
+            is_manakete = cd.jidDefault in MANAKETE_JIDS
+            if not is_manakete:
+                for slot_idx in range(4):
+                    item_id = data[arr_pos + 12 + slot_idx]
+                    if item_id != 0:
+                        idd = ItemData(rom, item_id)
+                        if idd.is_weapon():
+                            items_by_entry.append((arr_pos, slot_idx, item_id))
+            arr_pos += UNIT_DEF_SIZE
+
+    if len(items_by_entry) < 2:
+        return 0
+
+    shuffled_ids = [it[2] for it in items_by_entry]
+    random.shuffle(shuffled_ids)
+
+    for (arr_pos, slot_idx, _), new_id in zip(items_by_entry, shuffled_ids):
+        data[arr_pos + 12 + slot_idx] = new_id
+
+    return len(items_by_entry)
+
+
 def randomize_unit_items(rom, modified_pids):
     """Assign random weapons matching each unit's new class in all UnitDefinition arrays."""
     weapon_pools = build_weapon_pools(rom)
@@ -814,12 +918,225 @@ def randomize_promotion_items(rom, config):
     return total
 
 
+def _build_ud_to_chapters(rom):
+    """Build mapping: UD array file offset -> list of chapter names."""
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+
+    chapter_map = {
+        0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
+        3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
+        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: The Lost Prince',
+        7: 'Ch6: Triumph', 8: 'Ch7: Waterside Renvall',
+        9: 'Ch8: It\'s a Trap!', 10: 'Ch9: Distant Blade',
+        11: 'Ch10: Turning Traitor', 12: 'Ch11: Creeping Darkness',
+        13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
+        15: 'Ch14: Sacred Stone', 16: 'Ch15: Scorched Sand',
+        17: 'Ch16: Ruler of the Sea', 18: 'Ch17: River of Regrets (Eph)',
+        19: 'Ch18: Two Faces of Evil (Eph)', 20: 'Ch19: Last Hope (Eph)',
+        21: 'Ch20: Darkling Woods (Eph)', 22: 'Ch20: Darkling Woods (Shared)',
+        23: 'Ch9: Ruled by Madness', 24: 'Ch10: Island of the Dead',
+        25: 'Ch11: Phantom Ship', 26: 'Ch12: Piano',
+        27: 'Ch13: Fluorspar\'s Oath', 28: 'Ch14: Father and Son',
+        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruler of the Sea (Eph)',
+        31: 'Ch17: River of Regrets (Final)', 32: 'Ch18: Two Faces of Evil (Final)',
+        33: 'Ch19: Last Hope (Final)', 34: 'Ch20: Darkling Woods (Final)',
+    }
+
+    def is_ud_addr(addr):
+        if addr == 0 or addr < 0x088B0000 or addr >= 0x088D0000:
+            return False
+        o = addr - ROM_BASE
+        if o + 20 > len(data): return False
+        chunk = data[o:o+20]
+        if all(b == 0 for b in chunk): return False
+        ci, cj = chunk[0], chunk[1]
+        return ci > 0 and ci <= 114 and cj <= 114
+
+    # Index LOAD commands in event scripts
+    script_to_uds = {}
+    for pos in range(len(data) - 8):
+        cmd = data[pos]
+        if 0x40 <= cmd <= 0x43 and data[pos+1] == 0x2C:
+            ptr = struct.unpack_from('<I', data, pos+4)[0]
+            if 0x088B0000 <= ptr < 0x088D0000 and is_ud_addr(ptr):
+                script_to_uds.setdefault(ROM_BASE + pos, set()).add(ptr)
+
+    ud_to_scripts = {}
+    for script_addr, ud_addrs in script_to_uds.items():
+        for ua in ud_addrs:
+            ud_to_scripts.setdefault(ua, []).append(script_addr)
+
+    result = {}
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+
+        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        event_data_off = event_data_ptr - ROM_BASE
+
+        gmap_event_id = data[ch_off + 0x75]
+        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
+        gmap_off = gmap_ptr - ROM_BASE
+
+        chapter_name = chapter_map.get(ch, f'Ch{ch}')
+
+        seen = set()
+        # Direct UD pointers in event data
+        for off in range(0, 0x400, 4):
+            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            if is_ud_addr(val) and val not in seen:
+                seen.add(val)
+                result.setdefault(val - ROM_BASE, []).append(chapter_name)
+
+        # LOAD-command referenced UDs from scripts in event data
+        for off in range(0, 0x400, 4):
+            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            if 0x089E0000 <= val < 0x08A00000 and val in script_to_uds:
+                for ud_addr in script_to_uds[val]:
+                    if is_ud_addr(ud_addr) and ud_addr not in seen:
+                        seen.add(ud_addr)
+                        result.setdefault(ud_addr - ROM_BASE, []).append(chapter_name)
+
+        # GMap UD arrays
+        for off in range(0, 0x200, 4):
+            val = struct.unpack_from('<I', data, gmap_off + off)[0]
+            if is_ud_addr(val) and val not in seen:
+                seen.add(val)
+                result.setdefault(val - ROM_BASE, []).append(chapter_name)
+
+    return result
+
+
+def _write_report(orig_data, rom, config, seed, output_path):
+    """Write a .txt report of all randomization changes alongside the output ROM."""
+    data = rom.data
+
+    # Derive .txt path from output .gba path
+    if output_path and output_path.lower().endswith('.gba'):
+        txt_path = output_path[:-4] + '.txt'
+    else:
+        base = output_path.rsplit('.', 1)[0] if output_path else 'output'
+        txt_path = base + '.txt'
+
+    lines = []
+    lines.append('=== FE8 Randomizer Report ===')
+    lines.append(f'Seed: {seed}')
+    lines.append('')
+
+    # --- Class changes ---
+    lines.append('=== Class Changes ===')
+    class_changed = 0
+    for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
+        orig_cd = CharacterData.__new__(CharacterData)
+        orig_raw = orig_data[rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE:][:PINFO_SIZE]
+        orig_cd.jidDefault = orig_raw[4]
+
+        mod_cd = CharacterData(rom, pid)
+        if orig_cd.jidDefault != mod_cd.jidDefault:
+            pid_name = PID(pid).name if pid in PID._value2member_map_ else f'PID{pid}'
+            old_jid_name = JID(orig_cd.jidDefault).name if orig_cd.jidDefault in JID._value2member_map_ else f'JID{orig_cd.jidDefault}'
+            new_jid_name = JID(mod_cd.jidDefault).name if mod_cd.jidDefault in JID._value2member_map_ else f'JID{mod_cd.jidDefault}'
+            lines.append(f'  {pid_name}: {old_jid_name} -> {new_jid_name}')
+            class_changed += 1
+    if class_changed == 0:
+        lines.append('  (none)')
+    lines.append('')
+
+    # --- Weapon effects ---
+    effect_names = {0: '(none)', 1: 'Poison', 2: 'Nosferatu', 3: 'Eclipse', 4: 'Devil', 5: 'Stone'}
+    lines.append('=== Weapon Effect Changes ===')
+    eff_changed = 0
+    for item_id in range(256):
+        off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+        if off + ITEM_DATA_SIZE > len(data): break
+        stored_id = data[off + 6]
+        if stored_id != item_id: continue
+        orig_eff = orig_data[off + 0x1F] if off < len(orig_data) else 0
+        mod_eff = data[off + 0x1F]
+        if orig_eff != mod_eff:
+            wep_type = data[off + 7]
+            type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
+            from_name = effect_names.get(orig_eff, f'0x{orig_eff:02X}')
+            to_name = effect_names.get(mod_eff, f'0x{mod_eff:02X}')
+            lines.append(f'  0x{item_id:02X} ({type_name}): {from_name} -> {to_name}')
+            eff_changed += 1
+    if eff_changed == 0:
+        lines.append('  (none)')
+    lines.append('')
+
+    # --- Item swaps from UD arrays ---
+    ud_to_chapters = _build_ud_to_chapters(rom)
+    lines.append('=== Item Changes per Chapter ===')
+    item_patches = 0
+
+    for ud_offset, count in _scan_ud_arrays(rom):
+        arr_pos = ud_offset
+        chapters = ud_to_chapters.get(ud_offset, [])
+        ch_label = ', '.join(chapters) if chapters else 'Unknown'
+        ud_entries_changed = 0
+        entry_lines = []
+
+        for entry_idx in range(count):
+            if arr_pos + UNIT_DEF_SIZE > len(data): break
+            chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+            orig_chunk = orig_data[arr_pos:arr_pos + UNIT_DEF_SIZE] if arr_pos < len(orig_data) else bytes(20)
+            if all(b == 0 for b in chunk): break
+
+            char_idx = chunk[0]
+            old_items = [orig_chunk[12 + j] for j in range(4)]
+            new_items = [chunk[12 + j] for j in range(4)]
+
+            if old_items != new_items:
+                pid_name = PID(char_idx).name if char_idx in PID._value2member_map_ else f'PID{char_idx}'
+                slot_changes = []
+                for s in range(4):
+                    if old_items[s] != new_items[s]:
+                        slot_changes.append(f'  slot{s}: 0x{old_items[s]:02X} -> 0x{new_items[s]:02X}')
+                if slot_changes:
+                    entry_lines.append(f'    {pid_name}:')
+                    entry_lines.extend(slot_changes)
+                ud_entries_changed += 1
+
+        if ud_entries_changed:
+            lines.append(f'  UD @ 0x{ROM_BASE + ud_offset:08X} [{ch_label}]:')
+            lines.extend(entry_lines)
+            item_patches += ud_entries_changed
+
+    if item_patches == 0:
+        lines.append('  (none)')
+    lines.append('')
+
+    # --- Event item swaps ---
+    lines.append('=== Event Item Changes ===')
+    ev_changed = 0
+    for offset, item_id in _scan_giveitem_events(rom):
+        if offset < len(orig_data):
+            orig_item = orig_data[offset + 2]
+            mod_item = data[offset + 2]
+            if orig_item != mod_item:
+                lines.append(f'  0x{ROM_BASE + offset:08X}: 0x{orig_item:02X} -> 0x{mod_item:02X}')
+                ev_changed += 1
+    if ev_changed == 0:
+        lines.append('  (none)')
+    lines.append('')
+
+    # Write file
+    report_text = '\n'.join(lines)
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(report_text)
+    print(f'Report written to {txt_path}')
+
+
 def apply_config(rom_path, config, seed=None, output_path=None):
     if seed is not None:
         random.seed(seed)
     elif 'seed' in config:
         random.seed(config['seed'])
     rom = ROM(rom_path)
+
+    # Snapshot original data for report generation
+    original_data = bytearray(rom.data)
 
     modified_pids = randomize_class(rom, config)
     randomize_growths(rom, config)
@@ -835,10 +1152,23 @@ def apply_config(rom_path, config, seed=None, output_path=None):
         print(f"Patched {patched} unit definition(s) to use new default classes")
 
     item_rules = config.get('item_randomization', {})
-    if item_rules.get('enabled', True):
+    mode = item_rules.get('mode', 'random')
+    if mode == 'shuffle':
+        shuffled = _shuffle_unit_items(rom)
+        if shuffled:
+            print(f"Shuffled {shuffled} item(s) across unit definitions")
+    elif item_rules.get('enabled', True):
         item_patched = randomize_unit_items(rom, modified_pids)
         if item_patched:
             print(f"Randomized items for {item_patched} unit definition(s)")
+
+    if item_rules.get('randomize_events', False) and mode != 'shuffle':
+        ev_patched = randomize_event_items(rom, modified_pids)
+        if ev_patched:
+            print(f"Randomized {ev_patched} event-given item(s)")
+
+    resolved_seed = seed if seed is not None else config.get('seed', None)
+    _write_report(original_data, rom, config, resolved_seed, output_path)
 
     if output_path:
         out = output_path
