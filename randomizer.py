@@ -1,6 +1,6 @@
 import random
 import struct
-from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE
+from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE, ITEM_NAMES
 
 PLAYABLE_PIDS = set(range(PID.EIRIKA, PID.TANA + 1))
 PLAYABLE_PLAYABLE_PIDS = {
@@ -926,21 +926,21 @@ def _build_ud_to_chapters(rom):
     chapter_map = {
         0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
         3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
-        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: The Lost Prince',
-        7: 'Ch6: Triumph', 8: 'Ch7: Waterside Renvall',
+        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: Unbroken Heart',
+        7: 'Ch6: Victims of War', 8: 'Ch7: Waterside Renvall',
         9: 'Ch8: It\'s a Trap!', 10: 'Ch9: Distant Blade',
-        11: 'Ch10: Turning Traitor', 12: 'Ch11: Creeping Darkness',
+        11: 'Ch10: Revolt at Carcino', 12: 'Ch11: Creeping Darkness',
         13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
-        15: 'Ch14: Sacred Stone', 16: 'Ch15: Scorched Sand',
-        17: 'Ch16: Ruler of the Sea', 18: 'Ch17: River of Regrets (Eph)',
-        19: 'Ch18: Two Faces of Evil (Eph)', 20: 'Ch19: Last Hope (Eph)',
-        21: 'Ch20: Darkling Woods (Eph)', 22: 'Ch20: Darkling Woods (Shared)',
-        23: 'Ch9: Ruled by Madness', 24: 'Ch10: Island of the Dead',
-        25: 'Ch11: Phantom Ship', 26: 'Ch12: Piano',
+        15: 'Ch14: Queen of White Dunes', 16: 'Ch15: Scorched Sand',
+        17: 'Ch16: Ruled by Madness', 18: 'Ch17: River of Regrets (Eri)',
+        19: 'Ch18: Two Faces of Evil (Eri)', 20: 'Ch19: Last Hope (Eri)',
+        21: 'Ch20: Darkling Woods (Eri)', 22: 'Ch20: Darkling Woods (Eri)',
+        23: 'Ch9: Fort Rigwald', 24: 'Ch10: Turning Traitor',
+        25: 'Ch11: Phantom Ship', 26: 'Ch12: Landing at Taizel',
         27: 'Ch13: Fluorspar\'s Oath', 28: 'Ch14: Father and Son',
-        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruler of the Sea (Eph)',
-        31: 'Ch17: River of Regrets (Final)', 32: 'Ch18: Two Faces of Evil (Final)',
-        33: 'Ch19: Last Hope (Final)', 34: 'Ch20: Darkling Woods (Final)',
+        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruled by Maddness (Eph)',
+        31: 'Ch17: River of Regrets (Eph)', 32: 'Ch18: Two Faces of Evil (Eph)',
+        33: 'Ch19: Last Hope (Eph)', 34: 'Ch20: Darkling Woods (Eph)',
     }
 
     def is_ud_addr(addr):
@@ -1008,6 +1008,51 @@ def _build_ud_to_chapters(rom):
     return result
 
 
+def _find_chapters_for_gba_addr(rom, gba_addr):
+    """Return list of chapter names whose event data range contains gba_addr."""
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+
+    chapter_map = {
+        0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
+        3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
+        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: The Lost Prince',
+        7: 'Ch6: Triumph', 8: 'Ch7: Waterside Renvall',
+        9: 'Ch8: It\'s a Trap!', 10: 'Ch9: Distant Blade',
+        11: 'Ch10: Turning Traitor', 12: 'Ch11: Creeping Darkness',
+        13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
+        15: 'Ch14: Sacred Stone', 16: 'Ch15: Scorched Sand',
+        17: 'Ch16: Ruler of the Sea', 18: 'Ch17: River of Regrets (Eph)',
+        19: 'Ch18: Two Faces of Evil (Eph)', 20: 'Ch19: Last Hope (Eph)',
+        21: 'Ch20: Darkling Woods (Eph)', 22: 'Ch20: Darkling Woods (Shared)',
+        23: 'Ch9: Ruled by Madness', 24: 'Ch10: Island of the Dead',
+        25: 'Ch11: Phantom Ship', 26: 'Ch12: Piano',
+        27: 'Ch13: Fluorspar\'s Oath', 28: 'Ch14: Father and Son',
+        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruler of the Sea (Eph)',
+        31: 'Ch17: River of Regrets (Final)', 32: 'Ch18: Two Faces of Evil (Final)',
+        33: 'Ch19: Last Hope (Final)', 34: 'Ch20: Darkling Woods (Final)',
+    }
+
+    ranges = []
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        if event_data_ptr == 0: continue
+        name = chapter_map.get(ch, f'Ch{ch}')
+        ranges.append((event_data_ptr, ch, name))
+
+    ranges.sort()
+
+    result = set()
+    for i, (ptr, ch, name) in enumerate(ranges):
+        end = ranges[i+1][0] if i+1 < len(ranges) else ptr + 0x400
+        if ptr <= gba_addr < end:
+            result.add(name)
+
+    return sorted(result)
+
+
 def _write_report(orig_data, rom, config, seed, output_path):
     """Write a .txt report of all randomization changes alongside the output ROM."""
     data = rom.data
@@ -1059,51 +1104,10 @@ def _write_report(orig_data, rom, config, seed, output_path):
             type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
             from_name = effect_names.get(orig_eff, f'0x{orig_eff:02X}')
             to_name = effect_names.get(mod_eff, f'0x{mod_eff:02X}')
-            lines.append(f'  0x{item_id:02X} ({type_name}): {from_name} -> {to_name}')
+            item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
+            lines.append(f'  {item_name} ({type_name}): {from_name} -> {to_name}')
             eff_changed += 1
     if eff_changed == 0:
-        lines.append('  (none)')
-    lines.append('')
-
-    # --- Item swaps from UD arrays ---
-    ud_to_chapters = _build_ud_to_chapters(rom)
-    lines.append('=== Item Changes per Chapter ===')
-    item_patches = 0
-
-    for ud_offset, count in _scan_ud_arrays(rom):
-        arr_pos = ud_offset
-        chapters = ud_to_chapters.get(ud_offset, [])
-        ch_label = ', '.join(chapters) if chapters else 'Unknown'
-        ud_entries_changed = 0
-        entry_lines = []
-
-        for entry_idx in range(count):
-            if arr_pos + UNIT_DEF_SIZE > len(data): break
-            chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
-            orig_chunk = orig_data[arr_pos:arr_pos + UNIT_DEF_SIZE] if arr_pos < len(orig_data) else bytes(20)
-            if all(b == 0 for b in chunk): break
-
-            char_idx = chunk[0]
-            old_items = [orig_chunk[12 + j] for j in range(4)]
-            new_items = [chunk[12 + j] for j in range(4)]
-
-            if old_items != new_items:
-                pid_name = PID(char_idx).name if char_idx in PID._value2member_map_ else f'PID{char_idx}'
-                slot_changes = []
-                for s in range(4):
-                    if old_items[s] != new_items[s]:
-                        slot_changes.append(f'  slot{s}: 0x{old_items[s]:02X} -> 0x{new_items[s]:02X}')
-                if slot_changes:
-                    entry_lines.append(f'    {pid_name}:')
-                    entry_lines.extend(slot_changes)
-                ud_entries_changed += 1
-
-        if ud_entries_changed:
-            lines.append(f'  UD @ 0x{ROM_BASE + ud_offset:08X} [{ch_label}]:')
-            lines.extend(entry_lines)
-            item_patches += ud_entries_changed
-
-    if item_patches == 0:
         lines.append('  (none)')
     lines.append('')
 
@@ -1115,7 +1119,12 @@ def _write_report(orig_data, rom, config, seed, output_path):
             orig_item = orig_data[offset + 2]
             mod_item = data[offset + 2]
             if orig_item != mod_item:
-                lines.append(f'  0x{ROM_BASE + offset:08X}: 0x{orig_item:02X} -> 0x{mod_item:02X}')
+                gba_addr = ROM_BASE + offset
+                chapters = _find_chapters_for_gba_addr(rom, gba_addr)
+                ch_label = ', '.join(chapters) if chapters else 'Unknown'
+                orig_name = ITEM_NAMES.get(orig_item, f'0x{orig_item:02X}')
+                mod_name = ITEM_NAMES.get(mod_item, f'0x{mod_item:02X}')
+                lines.append(f'  [{ch_label}] {orig_name} -> {mod_name}')
                 ev_changed += 1
     if ev_changed == 0:
         lines.append('  (none)')
