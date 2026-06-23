@@ -81,6 +81,10 @@ Examples:
         print("  stone: 3")
         print("affinity_randomization:")
         print("  enabled: false")
+        print("promotion_items:")
+        print("  enabled: false")
+        print("  master_seal_universal: true")
+        print("  replace_distribution: true")
         return
 
     try:

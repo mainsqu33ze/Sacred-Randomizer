@@ -1,0 +1,4 @@
+*pycache*
+_test_*.gba
+*_randomized.gba
+*.GBA

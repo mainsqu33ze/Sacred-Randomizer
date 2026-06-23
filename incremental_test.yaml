@@ -1,0 +1,28 @@
+# Incremental test config: start with everything disabled, enable features one by one
+# Usage: python fe8_randomizer.py ROM.GBA -c incremental_test.yaml -o test.gba
+
+seed: 42
+
+class_randomization:
+  enabled: true
+
+growth_randomization:
+  enabled: shuffle
+
+base_stat_randomization:
+  enabled: shuffle
+
+affinity_randomization:
+  enabled: true
+
+weapon_randomization:
+  enabled: true
+
+weapon_effects:
+  enabled: 10
+
+promotion_items:
+  enabled: true
+
+item_randomization:
+  enabled: true # When this gets set to true the visual bug appears 

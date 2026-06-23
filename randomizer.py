@@ -1,6 +1,6 @@
 import random
 import struct
-from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools
+from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools
 
 PLAYABLE_PIDS = set(range(PID.EIRIKA, PID.TANA + 1))
 PLAYABLE_PLAYABLE_PIDS = {
@@ -406,6 +406,9 @@ _EVENT_CMDS_WITH_UD = (0x40, 0x41, 0x42, 0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4)
 
 def _ud_array_at(rom, offset):
     """Check if offset points to a valid UnitDefinition array. Returns entry count or 0."""
+    # Reject arrays in compressed animation data (0x088D0000+)
+    if offset + ROM_BASE >= 0x088D0000:
+        return 0
     pos = offset
     entries = 0
     while pos + UNIT_DEF_SIZE <= len(rom.data):
@@ -414,7 +417,7 @@ def _ud_array_at(rom, offset):
             return entries
         char_idx = chunk[0]
         class_idx = chunk[1]
-        if char_idx > 200 or class_idx > 110:
+        if char_idx == 0 or char_idx > 114 or class_idx > 114:
             return 0
         pos += UNIT_DEF_SIZE
         entries += 1
@@ -681,6 +684,136 @@ def randomize_weapon_effects(rom, config):
         print(f"Applied weapon effects to {patched} item(s)")
 
 
+def randomize_promotion_items(rom, config):
+    """Make all promotion items behave as Master Seal, usable by all classes.
+    Replaces items 0x62-0x68 in UD arrays with Master Seals."""
+    rules = config.get('promotion_items', {})
+    if not rules.get('enabled', False):
+        return 0
+
+    import struct
+    data = rom.data
+    total = 0
+
+    master_seal_table_addr = PROMO_ITEM_TABLES[MASTER_SEAL_ITEM_ID]
+
+    if rules.get('master_seal_universal', True):
+        # Phase 1: Zero out item-specific permission tables for non-Master Seal items
+        for item_id, table_addr in PROMO_ITEM_TABLES.items():
+            if item_id == MASTER_SEAL_ITEM_ID:
+                continue
+            off = rom_offset(table_addr)
+            data[off:off + 0x41] = bytes(0x41)
+            total += 1
+
+        # Phase 2: Fill Master Seal's item-specific table with promo JID + 1 for each class
+        # For class_id 0-20: use jidPromotion from class data (or 0x01 if no valid promo)
+        # For class_id > 20: fill with 0x01 (no promotion for monsters)
+        ms_off = rom_offset(master_seal_table_addr)
+        data[ms_off:ms_off + 0x41] = bytes([0x01] * 0x41)
+        from fe8rom import CharacterData, ClassData
+        for cls in range(1, 99):
+            try:
+                cd = ClassData(rom, cls)
+                promo_jid = cd.jidPromotion
+                if promo_jid > 0 and promo_jid != cls:
+                    byte_val = promo_jid + 1
+                else:
+                    byte_val = 0x01
+            except Exception:
+                byte_val = 0x01
+            # Write byte at table offset (may overflow > 0x40 into adjacent table space, which is safe)
+            pos = ms_off + cls
+            if pos < len(data):
+                data[pos] = byte_val
+        total += 1
+
+        # Phase 3: Make the function pointer table route all promo items to Master Seal's stub
+        # Find the stub address for Master Seal
+        ft_off = rom_offset(PROMO_FUNCTION_TABLE_ADDR)
+        ms_stub_addr = struct.unpack_from('<I', data, ft_off + 7 * 4)[0]
+        # Change entries 0-6 to point to the same stub
+        for i in range(7):
+            struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
+            total += 1
+
+        # Phase 4: Modify class-specific tables so Master Seal works for classes 0-19
+        # Each class table is 0x41 (65) bytes, indexed by item_id
+        # Class 20 is excluded because its table overflows into the pointer table at 0x0880D270
+        for cls in range(20):
+            table_addr = PROMO_CLASS_TABLE_BASE + cls * 0x41
+            # Get the class's standard promotion JID from ClassData
+            if cls == 0:
+                # NONE class - no promotion
+                promo_jid = 0
+            else:
+                try:
+                    cd = ClassData(rom, cls)
+                    promo_jid = cd.jidPromotion
+                except Exception:
+                    promo_jid = 0
+
+            off = rom_offset(table_addr)
+            # Set all promotion item bytes to promo_jid + 1 (so return = promo_jid)
+            # This makes any old promotion item act as Master Seal via the class-specific path
+            byte_val = promo_jid + 1 if promo_jid > 0 and promo_jid != cls else 0x01
+            for item_id in [MASTER_SEAL_ITEM_ID] + sorted(PROMOTION_ITEM_IDS):
+                data[off + item_id] = byte_val
+            total += 1
+
+        # Phase 4b: Redirect class 20's handler to use Master Seal's item-specific table
+        # Class 20's class-specific table at 0x0880D22F cannot hold item_ids > 0x40 (overflows)
+        # Instead, reroute to Master Seal's handler which reads from 0x0880CA0F[class_id]
+        cf_off = rom_offset(PROMO_CLASS_FUNCTION_TABLE)
+        struct.pack_into('<I', data, cf_off + 20 * 4, ms_stub_addr)
+        total += 1
+
+        # Phase 5: Zero out the remaining entries in the function pointer table
+        # (items 0x6A-0x74) so they can't accidentally become promotion items
+        for i in range(8, 19):
+            struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
+            total += 1
+
+        print("Applied Master Seal universal promotion")
+
+    # Phase 6: Replace promotion items in UD arrays
+    if rules.get('replace_distribution', True):
+        replaced = 0
+        for ud_offset, _ in _scan_ud_arrays(rom):
+            arr_pos = ud_offset
+            while arr_pos + UNIT_DEF_SIZE <= len(data):
+                chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+                if all(b == 0 for b in chunk):
+                    break
+                for slot_idx in range(4):
+                    item_id = data[arr_pos + 0x0C + slot_idx]
+                    if item_id in PROMOTION_ITEM_IDS:
+                        data[arr_pos + 0x0C + slot_idx] = MASTER_SEAL_ITEM_ID
+                        replaced += 1
+                arr_pos += UNIT_DEF_SIZE
+        if replaced:
+            print(f"Replaced {replaced} promotion item(s) with Master Seal in unit definitions")
+
+        # Phase 7: Copy Master Seal's item data to other promotion items
+        # This makes items 0x62-0x68 look identical to Master Seal (same icon, name, effect)
+        ms_item_off = rom_offset(ITEM_TABLE_ADDR) + MASTER_SEAL_ITEM_ID * ITEM_DATA_SIZE
+        ms_item_data = data[ms_item_off:ms_item_off + ITEM_DATA_SIZE]
+
+        for item_id in PROMOTION_ITEM_IDS:
+            dst_off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+            # Copy all bytes except number field (offset 6) which must stay as the correct item ID
+            for byte_idx in range(ITEM_DATA_SIZE):
+                if byte_idx == 6:
+                    continue  # preserve original number/stored_id
+                data[dst_off + byte_idx] = ms_item_data[byte_idx]
+            # Set number field explicitly
+            data[dst_off + 6] = item_id
+            total += 1
+        print(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
+
+    return total
+
+
 def apply_config(rom_path, config, seed=None, output_path=None):
     if seed is not None:
         random.seed(seed)
@@ -694,6 +827,8 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     randomize_affinity(rom, config)
     randomize_weapon_stats(rom, config)
     randomize_weapon_effects(rom, config)
+
+    randomize_promotion_items(rom, config)
 
     patched = patch_unit_definitions(rom, modified_pids)
     if patched:
