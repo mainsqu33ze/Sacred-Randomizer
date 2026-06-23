@@ -126,98 +126,77 @@ def _parse_omit_classes(config):
 
 def randomize_class(rom, config):
     rules = config.get('class_randomization', {})
-    shuffle = rules.get('shuffle', True)
-    preserve_base = rules.get('preserve_base', True)
-    stat_scramble = rules.get('randomize_stats', False)
-
-    modified_pids = set()
+    mode = rules.get('mode', 'shuffle')
+    manakete_count = rules.get('manakete_count', 1)
+    # Backward compat: old shuffle: false meant no changes at all
+    if 'shuffle' in rules and not rules.get('shuffle', True):
+        mode = 'none'
+        manakete_count = 0
     omit_jids = _parse_omit_classes(config)
 
-    if shuffle:
-        promoted_jids, unpromoted_jids = _split_class_pool(rom)
-        promoted_chars, unpromoted_chars = _split_characters_by_tier(rom)
+    modified_pids = set()
 
-        available_trainee = sorted(TRAINEE_JIDS - omit_jids)
-        trainee_chars = sorted([p for p in unpromoted_chars if p in TRAINEE_PIDS])
-        non_trainee_unpromoted = sorted([p for p in unpromoted_chars if p not in TRAINEE_PIDS])
+    def _assign(pid, new_jid):
+        cd = CharacterData(rom, pid)
+        cd.jidDefault = new_jid
+        _adjust_weapon_ranks(cd, new_jid, rom)
+        cd.write(rom)
+        modified_pids.add(pid)
 
-        # Apply omit_jids to main pools
-        promoted_jids -= omit_jids
-        unpromoted_jids -= omit_jids
+    promoted_jids, unpromoted_jids = _split_class_pool(rom)
+    promoted_chars, unpromoted_chars = _split_characters_by_tier(rom)
 
-        # Shuffle trainees among trainee classes
+    available_trainee = sorted(TRAINEE_JIDS - omit_jids)
+    trainee_chars = sorted([p for p in unpromoted_chars if p in TRAINEE_PIDS])
+    non_trainee_unpromoted = sorted([p for p in unpromoted_chars if p not in TRAINEE_PIDS])
+
+    promoted_jids -= omit_jids
+    unpromoted_jids -= omit_jids
+
+    if mode == 'shuffle':
+        # Permute classes within each tier (no replacement)
         if trainee_chars and available_trainee:
             trainee_pool = list(available_trainee)
             random.shuffle(trainee_pool)
             for pid, new_jid in zip(trainee_chars, trainee_pool):
-                cd = CharacterData(rom, pid)
-                cd.jidDefault = new_jid
-                _adjust_weapon_ranks(cd, new_jid, rom)
-                cd.write(rom)
-                modified_pids.add(pid)
+                _assign(pid, new_jid)
 
-        # Shuffle promoted characters
         if promoted_chars:
             pool_p = list(promoted_jids)
             random.shuffle(pool_p)
             for pid, new_jid in zip(promoted_chars, pool_p):
-                cd = CharacterData(rom, pid)
-                cd.jidDefault = new_jid
-                _adjust_weapon_ranks(cd, new_jid, rom)
-                cd.write(rom)
-                modified_pids.add(pid)
+                _assign(pid, new_jid)
 
-        # Shuffle remaining unpromoted characters
         if non_trainee_unpromoted:
             pool_u = list(unpromoted_jids)
             random.shuffle(pool_u)
             for pid, new_jid in zip(non_trainee_unpromoted, pool_u):
-                cd = CharacterData(rom, pid)
-                cd.jidDefault = new_jid
-                _adjust_weapon_ranks(cd, new_jid, rom)
-                cd.write(rom)
-                modified_pids.add(pid)
+                _assign(pid, new_jid)
 
-        # Pick one random character to be the Manakete
-        if PLAYABLE_PLAYABLE_PIDS:
-            manakete_pid = random.choice(sorted(PLAYABLE_PLAYABLE_PIDS))
-            cd = CharacterData(rom, manakete_pid)
-            cd.jidDefault = JID.MANAKETE_MYRRH
-            _adjust_weapon_ranks(cd, JID.MANAKETE_MYRRH, rom)
-            cd.write(rom)
-            modified_pids.add(manakete_pid)
+    elif mode == 'random':
+        # Sampling with replacement — each character picks independently from their tier
+        promoted_list = sorted(promoted_jids)
+        unpromoted_list = sorted(unpromoted_jids)
+        trainee_list = sorted(available_trainee)
 
-    if stat_scramble:
-        cross_tier = rules.get('cross_tier_scramble', False)
-        if cross_tier:
-            groups = [list(STANDARD_JIDS)]
-        else:
-            prom, unpr = _split_class_pool(rom)
-            groups = [sorted(prom), sorted(unpr), sorted(TRAINEE_JIDS)]
+        for pid in trainee_chars:
+            if trainee_list:
+                _assign(pid, random.choice(trainee_list))
 
-        for group in groups:
-            if len(group) < 2:
-                continue
-            pairs = []
-            for jid in group:
-                jd = ClassData(rom, jid)
-                stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                         jd.baseDef, jd.baseRes, jd.baseCon, jd.baseMov]
-                if sum(stats[:6]) == 0:
-                    continue
-                if preserve_base:
-                    pairs.append((jid, stats))
-                else:
-                    pairs.append((jid, [random.randint(0, 20) for _ in range(8)]))
-            if len(pairs) < 2:
-                continue
-            shuffled_stats = [p[1] for p in pairs]
-            random.shuffle(shuffled_stats)
-            for (jid, _), stats in zip(pairs, shuffled_stats):
-                jd = ClassData(rom, jid)
-                (jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                 jd.baseDef, jd.baseRes, jd.baseCon, jd.baseMov) = stats
-                jd.write(rom)
+        for pid in promoted_chars:
+            if promoted_list:
+                _assign(pid, random.choice(promoted_list))
+
+        for pid in non_trainee_unpromoted:
+            if unpromoted_list:
+                _assign(pid, random.choice(unpromoted_list))
+
+    # Manakete assignment — overwrites whatever the mode assigned
+    if manakete_count > 0 and PLAYABLE_PLAYABLE_PIDS:
+        playable_all = sorted(PLAYABLE_PLAYABLE_PIDS)
+        count = min(manakete_count, len(playable_all))
+        for pid in random.sample(playable_all, count):
+            _assign(pid, JID.MANAKETE_MYRRH)
 
     return modified_pids
 
@@ -295,6 +274,8 @@ def randomize_base_stats(rom, config):
     rules = config.get('base_stat_randomization', {})
     char_enabled = rules.get('character', False)
     class_enabled = rules.get('class', False)
+    preserve_base = rules.get('preserve_base', True)
+    shuffle_con_mov = rules.get('shuffle_con_mov', True)
     mean = rules.get('mean', None)
     stddev = rules.get('stddev', 3)
 
@@ -353,17 +334,25 @@ def randomize_base_stats(rom, config):
         else:
             prom, unpr = _split_class_pool(rom)
             groups = [sorted(prom), sorted(unpr), sorted(TRAINEE_JIDS)]
+        stat_count = 8 if shuffle_con_mov else 6
         for group in groups:
             if len(group) < 2:
                 continue
             pairs = []
             for jid in group:
                 jd = ClassData(rom, jid)
-                stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                         jd.baseDef, jd.baseRes]
-                if sum(stats) == 0:
+                if shuffle_con_mov:
+                    stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
+                             jd.baseDef, jd.baseRes, jd.baseCon, jd.baseMov]
+                else:
+                    stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
+                             jd.baseDef, jd.baseRes]
+                if sum(stats[:6]) == 0:
                     continue
-                pairs.append((jid, stats))
+                if preserve_base:
+                    pairs.append((jid, stats))
+                else:
+                    pairs.append((jid, [random.randint(0, 20) for _ in range(stat_count)]))
             if len(pairs) < 2:
                 continue
             shuffled = [p[1] for p in pairs]
@@ -371,7 +360,9 @@ def randomize_base_stats(rom, config):
             for (jid, _), stats in zip(pairs, shuffled):
                 jd = ClassData(rom, jid)
                 (jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                 jd.baseDef, jd.baseRes) = stats
+                 jd.baseDef, jd.baseRes) = stats[:6]
+                if shuffle_con_mov:
+                    jd.baseCon, jd.baseMov = stats[6], stats[7]
                 jd.write(rom)
 
     if isinstance(class_enabled, str) and class_enabled == 'random':
@@ -792,7 +783,7 @@ def randomize_promotion_items(rom, config):
     """Make all promotion items behave as Master Seal, usable by all classes.
     Replaces items 0x62-0x68 in UD arrays with Master Seals."""
     rules = config.get('promotion_items', {})
-    if not rules.get('enabled', False):
+    if not rules.get('enabled', True):
         return 0
 
     import struct

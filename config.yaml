@@ -1,49 +1,80 @@
 # FE8 Randomizer Configuration
-# Set to true to enable each randomization feature.
+# =============================
+#
+# Set to true to enable each feature. See comments below each option.
+# First-time users: the defaults below give a fun, balanced randomizer experience.
+# For advanced options, tweak the numbers under each feature.
+#
+# Override the seed on the command line:
+#   python fe8_randomizer.py ROM.GBA -c config.yaml --seed 12345
 
-seed: 42  # 0 = random (uses system time)
+seed: 42  # 0 = random (uses system time); also overridable via --seed
 
+# ---------------------------------------------------------------------------
+# CLASSES
+# ---------------------------------------------------------------------------
+# Shuffles which class each playable character belongs to.
+# Characters keep their original stats unless stat randomization is also enabled.
 class_randomization:
-  shuffle: true             # Shuffle classes among playable characters
-  randomize_stats: false    # Shuffle base stats across classes within same tier
-  preserve_base: true       # Shuffle existing stats vs assign random(0,20)
-  cross_tier_scramble: false  # Allow shuffling stats across all tiers together
-  omit_classes: []          # List of class names to exclude from randomization case insensitive (e.g. [MANAKETE])
+  mode: random              # 'shuffle' (permute, no repeats) or 'random' (sample with replacement, repeats allowed)
+  manakete_count: 1          # max characters that become Manakete (0 = none)
+  omit_classes: []           # List of JID enum names to exclude, e.g. [NECROMANCER] (case-insensitive)
 
+# ---------------------------------------------------------------------------
+# GROWTH RATES
+# ---------------------------------------------------------------------------
+# Controls how fast characters gain stats per level-up.
+# Modes: false (keep vanilla), 'shuffle' (reorder existing), 'random' (new values), 'pool' (distribute total)
 growth_randomization:
-  character: pool      # false, 'shuffle', 'random', or 'pool'
-  class: false            # false, 'shuffle', 'random', or 'pool'
-  min: 0                  # Minimum growth rate (for 'random'/'pool' modes)
-  max: 100                # Maximum growth rate (for 'random'/'pool' modes)
-  mean: null              # Mean for 'random' normal distribution (null = original value)
-  stddev: 10              # Standard deviation for 'random' normal distribution
-  pool_total: 315        # Total growth pool for 'pool' mode (null = use original total)
+  character: random            # Per-character growth rates
+  class: random               # Per-class growth rates (applied on top of character growths)
+  min: 0                     # Minimum growth rate (for 'random' / 'pool' modes)
+  max: 100                   # Maximum growth rate (for 'random' / 'pool' modes)
+  mean: null                 # Mean for 'random' normal distribution (null = use original value)
+  stddev: 10                 # Standard deviation for 'random' normal distribution
+  pool_total: 315            # Total growth pool for 'pool' mode (null = preserve each character's original total)
 
+# ---------------------------------------------------------------------------
+# BASE STATS
+# ---------------------------------------------------------------------------
+# Randomizes starting stats for characters or classes.
+# Modes: false (keep vanilla), 'shuffle' (swap values), 'random' (new values), or a multiplier (e.g. 1.5)
 base_stat_randomization:
-  character: random        # false, 'shuffle', 'random', or a multiplier (e.g., 1.5)
-  class: shuffle            # false, 'shuffle', 'random', or a multiplier (e.g., 1.5)
-  cross_tier_scramble: false  # 'shuffle' mode: allow swapping stats across all tiers together
-  mean: null                # Mean for 'random' mode (null = use original stat value)
-  stddev: 3                 # Standard deviation for 'random' mode
+  character: random          # Per-character base stats (HP, Str, Skl, Spd, Def, Res, Luck)
+  class: shuffle             # Per-class base stats (HP, Pow, Skl, Spd, Def, Res, Con, Mov)
+  preserve_base: true        # when class=shuffle: true = swap existing values; false = assign random(0,20)
+  shuffle_con_mov: false      # when class=shuffle: true = include in the class shuffling; false = leave Con and Mov unchanged
+  cross_tier_scramble: false # when class=shuffle: allow swapping across promoted/unpromoted/trainee tiers
+  mean: null                 # Mean for 'random' mode (null = use original stat value)
+  stddev: 3                  # Standard deviation for 'random' mode
 
+# ---------------------------------------------------------------------------
+# ITEMS (Weapons + Inventory)
+# ---------------------------------------------------------------------------
+# When classes get shuffled, characters need weapons they can actually use.
+# This is ON by default and strongly recommended if class_randomization.shuffle is true.
 item_randomization:
-  enabled: true             # Give units weapons matching their new class
-  mode: random              # 'random' (pick random weapons from pools) or 'shuffle' (permute existing items)
-  randomize_events: false   # Randomize items given via GiveItem event commands
+  enabled: true              # true = give characters weapons usable by their new class
+  mode: random               # 'random' = pick random usable weapons from pools; 'shuffle' = permute all items
+  randomize_events: false    # true = also randomize items given via GiveItem event commands (slow)
 
+# ---------------------------------------------------------------------------
+# WEAPON STATS (Might / Hit / Weight / Crit)
+# ---------------------------------------------------------------------------
+# Randomizes the numeric stats of all weapons independently.
 weapon_randomization:
-  enabled: random           # false, or truthy (randomizes all 4 weapon stats)
-  might: true               # Per-stat toggle; false to skip, or override with multiplier
+  enabled: true             # false = keep weapon stats as-is; true = randomize all 4 stats
+  might: true                # Per-stat toggle: true = randomize, false = keep original, number = multiplier
   hit: true
   weight: true
   crit: true
-  mean: null                # Mean for 'random' mode (null = use original value)
-  stddev: 5                 # Global standard deviation
-  might_stddev: 3           # Per-stat stddev overrides
+  mean: null                 # Mean for random values (null = use original value)
+  stddev: 5                  # Global standard deviation
+  might_stddev: 3            # Per-stat standard deviation overrides
   hit_stddev: 20
   weight_stddev: 3
   crit_stddev: 5
-  min_might: 1
+  min_might: 1               # Clamp ranges for each stat
   max_might: 20
   min_hit: 30
   max_hit: 120
@@ -52,18 +83,33 @@ weapon_randomization:
   min_crit: 0
   max_crit: 30
 
+# ---------------------------------------------------------------------------
+# WEAPON EFFECTS (Poison / Nosferatu / Eclipse / Devil / Stone)
+# ---------------------------------------------------------------------------
+# Randomly adds special effects to some weapons.
 weapon_effects:
-  enabled: 10            # false, or percent chance per weapon (e.g., 25)
-  poison: 4              # true/weight (higher = more likely), false to exclude
+  enabled: 10             # false = off; number = percent chance per weapon (e.g. 10 = 10%)
+  poison: 2                  # Relative weight for each effect (higher = more likely when rolling)
   nosferatu: 3
-  eclipse: 1                # weight 1 (very rare)
+  eclipse: 1
   devil: 5
   stone: 1
 
+# ---------------------------------------------------------------------------
+# AFFINITIES
+# ---------------------------------------------------------------------------
+# Randomizes each character's support affinity (Fire, Thunder, Wind, etc.).
 affinity_randomization:
-  enabled: shuffle          # Randomize character affinities
+  enabled: true             # true = randomize; keeps valid affinity range (1-7)
 
+# ---------------------------------------------------------------------------
+# PROMOTION ITEMS (Master Seals, Heaven Seals, etc.)
+# ---------------------------------------------------------------------------
+# Makes ALL promotion items behave like Master Seals:
+#   - Any unpromoted class can use them on any character
+#   - Chests, enemy drops, and events only give Master Seals
+# This is ON by default and makes promotion simpler and more flexible.
 promotion_items:
-  enabled: true            # Make all promotion items function as Master Seals
-  master_seal_universal: true   # Every unpromoted class can use them; false = vanilla restrictions
-  replace_distribution: true    # Replace drops/chests with Master Seals; false = keep original items
+  enabled: true                          # true = unify all promotion items as Master Seals
+  master_seal_universal: true            # false = restore vanilla per-class promotion restrictions
+  replace_distribution: true             # false = keep original promotion item types in chests/drops/events

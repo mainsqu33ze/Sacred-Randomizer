@@ -23,7 +23,7 @@ All features are controlled by `config.yaml`:
 
 | Section | Feature | Modes |
 |---|---|---|
-| `class_randomization` | Shuffle classes among playable characters | `shuffle`, `randomize_stats`, `preserve_base`, `omit_classes` |
+| `class_randomization` | Shuffle/randomize classes among playable characters | `mode`, `manakete_count`, `omit_classes` |
 | `growth_randomization` | Randomize growth rates | `false`, `shuffle`, `random`, `pool` |
 | `base_stat_randomization` | Randomize base stats | `false`, `shuffle`, `random`, multiplier + `cross_tier_scramble` |
 | `item_randomization` | Assign weapons matching new class | `true/false` |
@@ -35,20 +35,20 @@ All features are controlled by `config.yaml`:
 
 ### class_randomization
 
-Shuffle all playable characters into random classes and scramble class stat spreads within the same tier:
+Shuffle all playable characters into random classes:
 
 ```yaml
 class_randomization:
-  shuffle: true                 # reassign characters to random classes
-  randomize_stats: true         # shuffle base stats across classes in same tier
-  preserve_base: true           # keep existing values vs assign random(0,20)
-  cross_tier_scramble: false    # true to shuffle across all tiers together
+  mode: shuffle                 # 'shuffle' (permute, no repeats) or 'random' (sample with replacement)
+  manakete_count: 1             # max characters to become Manakete (0 = none)
   omit_classes: []              # case-insensitive JID names to exclude from pools
 ```
 
-Shuffle splits by promotion tier: promoted chars get promoted classes, unpromoted get unpromoted. Trainees (Ross, Amelia, Ewan) shuffle only among trainee classes. One random character becomes a Manakete (`JID.MANAKETE_MYRRH`) with a Dragonstone. `JID.MANAKETE` (14) is excluded from the standard pool and cannot be assigned via shuffle.
+`mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees — no class is assigned twice. `mode: random` picks independently for each character, so multiple characters can end up with the same class.
 
-When `randomize_stats: true`, each tier's stat arrays are shuffled among classes within that tier — promoted classes exchange stats with promoted, unpromoted with unpromoted, trainees with trainees. Set `cross_tier_scramble: true` to shuffle all classes together regardless of tier.
+`manakete_count` controls how many characters (0–N) become Manakete (`JID.MANAKETE_MYRRH`) with a Dragonstone. Applied after the mode logic, overwriting any previous class assignment. `JID.MANAKETE` (14) is excluded from `STANDARD_JIDS` and never appears in pools.
+
+Class stat block shuffling (swapping HP/Pow/Skl/Spd/Def/Res/Con/Mov between classes) is under `base_stat_randomization.class: shuffle` — see below.
 
 ### growth_randomization
 
@@ -87,13 +87,13 @@ base_stat_randomization:
   character: false
 ```
 
-No class ends up with 0 HP — only whole stat blocks are swapped (HP/Pow/Skl/Spd/Def/Res stay together). Promoted ↔ promoted, unpromoted ↔ unpromoted, trainees ↔ trainees. Use `cross_tier_scramble: true` to shuffle across all tiers together.
+No class ends up with 0 HP — only whole stat blocks are swapped (HP/Pow/Skl/Spd/Def/Res/Con/Mov stay together, or just HP/Pow/Skl/Spd/Def/Res if `shuffle_con_mov: false`). Promoted ↔ promoted, unpromoted ↔ unpromoted, trainees ↔ trainees. Use `cross_tier_scramble: true` to shuffle across all tiers together. Use `preserve_base: false` to assign random(0,20) instead of swapping existing values.
 
-Scale all stats by 20% for a harder game:
+Scale all player stats down by 20% for a harder game:
 
 ```yaml
 base_stat_randomization:
-  character: 0.8     # enemies have 80% of their original stats
+  character: 0.8     # allies have 80% of their original stats
   class: false
 ```
 
@@ -181,10 +181,8 @@ After class randomization, each unit's inventory is updated to include weapons t
 seed: 0
 
 class_randomization:
-  shuffle: true                 # reassign characters to random classes
-  randomize_stats: false        # shuffle base stats across classes in same tier
-  preserve_base: true           # keep existing values vs assign random(0,20)
-  cross_tier_scramble: false    # allow shuffling across all tiers together
+  mode: shuffle                 # 'shuffle' (permute) or 'random' (sample with replacement)
+  manakete_count: 1             # max characters to become Manakete (0 = none)
   omit_classes: []              # case-insensitive JID names to exclude from pools
 
 growth_randomization:
@@ -199,12 +197,16 @@ growth_randomization:
 base_stat_randomization:
   character: false              # false, shuffle, random, or multiplier
   class: false                  # false, shuffle, random, or multiplier
-  cross_tier_scramble: false    # shuffle across all tiers together (class: shuffle only)
+  preserve_base: true           # class=shuffle: swap existing values vs assign random(0,20)
+  shuffle_con_mov: true         # class=shuffle: false = leave Con and Mov unchanged
+  cross_tier_scramble: false    # class=shuffle: allow swapping across all tiers together
   mean: null                    # gaussian center (null = original value)
   stddev: 3                     # gaussian standard deviation
 
 item_randomization:
   enabled: true                 # update unit inventories to match new classes
+  mode: random                  # random or shuffle
+  randomize_events: false       # randomize GiveItem event commands
 
 weapon_randomization:
   enabled: false                # truthy gate to enable weapon stat changes
@@ -237,5 +239,10 @@ weapon_effects:
 
 affinity_randomization:
   enabled: false                # assign random affinity (1–7) to all playables
+
+promotion_items:
+  enabled: true                 # all promotion items act as Master Seals
+  master_seal_universal: true   # any unpromoted class can use them
+  replace_distribution: true    # replace drops/chests/events with Master Seal (0x88)
 ```
 
