@@ -55,3 +55,10 @@ promotion_items:
   enabled: true
   master_seal_universal: true
   replace_distribution: true
+
+enemy_randomization:
+  enabled: true
+  randomize_classes: true
+  randomize_items: true
+  include_monsters: true
+  weapon_upgrade_chance: 25

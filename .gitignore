@@ -3,3 +3,6 @@ _test_*.gba
 *_randomized.gba
 *.GBA
 scripts/_tmp_chapter_dump.py
+b_test_randomizer_rom.txt
+test_out.txt
+test_randomized.txt

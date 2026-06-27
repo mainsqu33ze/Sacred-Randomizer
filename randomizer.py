@@ -64,8 +64,40 @@ MONSTER_JIDS = {
     JID.ARCH_MOGALL, JID.GORGON,
     JID.GORGONEGG, JID.GARGOYLE,
     JID.DEATHGOYLE, JID.DRACO_ZOMBIE,
-    JID.DEMON_KING, JID.FLEET,
-    JID.PHANTOM,
+    JID.MANAKETE_2,  # 0x3B
+}
+
+# Additional monster JIDs beyond the enum range (0x7C-0x7D = 124-125)
+EXTRA_MONSTER_JIDS = {0x7C, 0x7D}
+
+# JIDs that generic enemies should never be randomized into.
+# Covers: Manakete (0x0E), Bard (0x46), Dancer (0x4D),
+# Demon King (0x66), unused/civilian JIDs (0x67-0x7B),
+# and special monster classes (0x50=FLEET, 0x51=PHANTOM).
+ENEMY_EXCLUDED_JIDS = {
+    JID.MANAKETE, JID.BARD, JID.DANCER,
+} | {0x50, 0x51} | {0x66} | set(range(0x67, 0x7C))
+
+# Boss PIDs — set of PIDs treated as unique boss units.
+# Default covers PIDs 0x40–0x63 (64–99) and some stragglers 0x68–0x6D (104–109)
+# matching the user's ROM layout.  Excluded by default unless include_bosses: true.
+BOSS_PIDS = set(range(0x40, 0x64)) | {0x68, 0x6A, 0x6B, 0x6C, 0x6D}
+# Final boss PID — always excluded from randomization regardless of settings.
+FINAL_BOSS_PID = 0xBE
+
+# Limited weapon pools for specific monster classes that can only use
+# a narrow set of items rather than standard weapon pool picks.
+MONSTER_WEAPON_POOLS = {
+    0x3B: [0x90],                          # MANAKETE_2
+    0x52: [0x8B, 0xAD, 0xAE, 0xAF],        # REVENANT
+    0x53: [0x8B, 0xAD, 0xAE, 0xAF],        # ENTOUMBED
+    0x58: [0x8B, 0xAD, 0xAE, 0xAF],        # BAEL
+    0x59: [0x8B, 0xAD, 0xAE, 0xAF],        # ELDER_BAEL
+    0x5B: [0xB1, 0xB2],                     # MAUTHEDOOG
+    0x5C: [0xB1, 0xB2],                     # GWYLLGI
+    0x5F: [0xB3, 0xB4, 0xAC],              # MOGALL
+    0x60: [0xB3, 0xB4, 0xAC],              # ARCH_MOGALL
+    0x61: [0xAC, 0xAB, 0xB5],             # GORGON
 }
 
 CA_PROMOTED = 0x100  # bit 8 of class attributes
@@ -418,7 +450,11 @@ def _ud_array_at(rom, offset):
 
 
 def _scan_ud_arrays(rom):
-    """Yield (ud_offset, entry_count) for every UD array referenced by event commands."""
+    """Yield (ud_offset, entry_count) for every UD array referenced by event commands.
+    
+    Uses _ud_array_at_lenient so arrays with PID > 114 (legitimate generic enemies)
+    are not incorrectly rejected.
+    """
     data = rom.data
     rom_size = len(data)
     for cmd_lo in _EVENT_CMDS_WITH_UD:
@@ -433,10 +469,79 @@ def _scan_ud_arrays(rom):
                 pos += 1
                 continue
             ud_offset = ptr - ROM_BASE
-            count = _ud_array_at(rom, ud_offset)
+            count = _ud_array_at_lenient(rom, ud_offset)
             if count > 0:
                 yield ud_offset, count
             pos += 1
+
+
+def _ud_array_at_lenient(rom, offset):
+    """Lenient UD array validation for chapter data arrays.
+    
+    Unlike _ud_array_at, allows entries with pid > 114 (NPC/allied units
+    that the game places alongside generic enemies in chapter data UD arrays).
+    Only rejects arrays with pid=0 mid-array, class_idx > 127, or >100 entries.
+    """
+    if offset + ROM_BASE >= 0x088D0000:
+        return 0
+    pos = offset
+    entries = 0
+    while pos + UNIT_DEF_SIZE <= len(rom.data):
+        chunk = rom.data[pos:pos + UNIT_DEF_SIZE]
+        if all(b == 0 for b in chunk):
+            return entries
+        pid = chunk[0]
+        jid = chunk[1]
+        if pid == 0 or jid > 127:
+            return 0
+        pos += UNIT_DEF_SIZE
+        entries += 1
+        if entries > 100:
+            return 0
+    return 0
+
+
+def _scan_chapter_ud_arrays(rom):
+    """Yield (ud_offset, entry_count) for UD arrays referenced by chapter data.
+    
+    Covers two sources per chapter:
+      - Direct UD pointers embedded in event data (scanned up to 0x400 bytes)
+      - GMap UD arrays (scanned up to 0x200 bytes)
+    """
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+    seen = set()
+
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        event_data_off = event_data_ptr - ROM_BASE
+        
+        gmap_event_id = data[ch_off + 0x75]
+        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
+        gmap_off = gmap_ptr - ROM_BASE
+
+        # Direct UD pointers in event data
+        for off in range(0, 0x400, 4):
+            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            if val not in seen:
+                ud_offset = val - ROM_BASE
+                count = _ud_array_at_lenient(rom, ud_offset)
+                if count > 0:
+                    seen.add(val)
+                    yield ud_offset, count
+
+        # GMap UD arrays
+        for off in range(0, 0x200, 4):
+            val = struct.unpack_from('<I', data, gmap_off + off)[0]
+            if val not in seen:
+                ud_offset = val - ROM_BASE
+                count = _ud_array_at_lenient(rom, ud_offset)
+                if count > 0:
+                    seen.add(val)
+                    yield ud_offset, count
 
 
 def patch_unit_definitions(rom, modified_pids):
@@ -996,6 +1101,238 @@ def randomize_promotion_items(rom, config):
     return total
 
 
+def _parse_enemy_omit_classes(config):
+    """Convert enemy_randomization.omit_classes config list to a set of JID values."""
+    omit = set()
+    for name in config.get('enemy_randomization', {}).get('omit_classes', []):
+        name = name.upper().strip()
+        if hasattr(JID, name):
+            omit.add(getattr(JID, name))
+    return omit
+
+
+def _move_group_key(move_table_ptr):
+    """Map a moveTable[0] pointer to a movement group key.
+    
+    Classes with the same movement key can be randomized into each other
+    without terrain-traversal issues.  The user specifies the only pointers
+    that deserve special grouping — everything else is standard foot.
+    """
+    FLYER_PTR = 0x0880BB96
+    WATER_PTRS = {0x0880B98E, 0x0880B90C}
+    MOUNTAIN_PTR = 0x0880B94D
+    if move_table_ptr == FLYER_PTR:
+        return 'flyer'
+    if move_table_ptr in WATER_PTRS:
+        return 'water'
+    if move_table_ptr == MOUNTAIN_PTR:
+        return 'mountain'
+    return 'foot'
+
+
+def randomize_enemies(rom, config):
+    """Randomizes generic enemy classes and items.
+
+    Operates on two levels:
+      (A) CharacterData.jidDefault — changes the default class for every
+          non-playable PID (PID > 34).  This affects placements where the
+          UD entry has class_idx = 0.
+      (B) UD array class override bytes — directly modifies the class byte
+          in every UD entry whose PID is non-playable.  This covers the
+          per-deployment overrides that FE Builder's Unit Placer shows.
+      (C) UD array items — per-deployment weapon randomization replicating
+          the player unit mode:random logic (pick any weapon the new class
+          can actually use, rather than rank-matching).
+    """
+    rules = config.get('enemy_randomization', {})
+    if not rules.get('enabled', False):
+        return 0
+
+    rand_classes = rules.get('randomize_classes', True)
+    rand_items = rules.get('randomize_items', True)
+    include_monsters = rules.get('include_monsters', False)
+    include_bosses = rules.get('include_bosses', False)
+    randomize_monster_classes = rules.get('randomize_monster_classes', False)
+    omit_jids = _parse_enemy_omit_classes(config)
+
+    # Determine which PIDs to process
+    pid_range = range(35, 256)
+    pid_range = [p for p in pid_range if p != FINAL_BOSS_PID]
+    if not include_bosses:
+        pid_range = [p for p in pid_range if p not in BOSS_PIDS]
+
+    # Build enemy-eligible class pools
+    enemy_jids = set(STANDARD_JIDS)
+    enemy_jids.discard(JID.EIRIKA_LORD)
+    enemy_jids.discard(JID.EPHRAIM_LORD)
+    enemy_jids.discard(JID.EIRIKA_MASTER_LORD)
+    enemy_jids.discard(JID.EPHRAIM_MASTER_LORD)
+    enemy_jids -= TRAINEE_JIDS
+
+    if include_monsters:
+        enemy_jids |= MONSTER_JIDS
+        enemy_jids |= EXTRA_MONSTER_JIDS
+
+    enemy_jids -= ENEMY_EXCLUDED_JIDS
+    enemy_jids -= omit_jids
+
+    # Split by tier
+    promoted_pool = set()
+    unpromoted_pool = set()
+    for jid in sorted(enemy_jids):
+        jd = ClassData(rom, jid)
+        if jd.attributes & CA_PROMOTED:
+            promoted_pool.add(jid)
+        else:
+            unpromoted_pool.add(jid)
+
+    # Group by movement category (not raw pointer) so foot classes share a pool
+    promoted_groups = {}
+    for jid in promoted_pool:
+        jd = ClassData(rom, jid)
+        key = _move_group_key(jd.moveTable[0])
+        promoted_groups.setdefault(key, []).append(jid)
+
+    unpromoted_groups = {}
+    for jid in unpromoted_pool:
+        jd = ClassData(rom, jid)
+        key = _move_group_key(jd.moveTable[0])
+        unpromoted_groups.setdefault(key, []).append(jid)
+
+    # Collect all UD arrays once (used by both class and item phases)
+    all_ud_offsets = set()
+    for off, _ in _scan_ud_arrays(rom):
+        all_ud_offsets.add(off)
+    for off, _ in _scan_chapter_ud_arrays(rom):
+        all_ud_offsets.add(off)
+
+    total = 0
+
+    # Phase A: Randomize CharacterData.jidDefault for non-playable PIDs
+    if rand_classes:
+        for pid in pid_range:
+            cd = CharacterData(rom, pid)
+            if cd.jidDefault == 0:
+                continue
+
+            orig_jid = cd.jidDefault
+
+            # If monsters are excluded from class randomization and orig is a monster, keep it
+            if not randomize_monster_classes and (orig_jid in MONSTER_JIDS or orig_jid in EXTRA_MONSTER_JIDS):
+                continue
+
+            orig_class = ClassData(rom, orig_jid)
+            is_promoted = bool(orig_class.attributes & CA_PROMOTED)
+            key = _move_group_key(orig_class.moveTable[0])
+
+            candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
+            new_jid = random.choice(candidates)
+
+            if new_jid != orig_jid:
+                rom.data[cd.offset + 5] = new_jid
+                total += 1
+
+    # Phase B + C: UD array class overrides and items
+    if rand_classes or rand_items:
+        wep_pools = build_weapon_pools(rom) if rand_items else None
+
+        for ud_offset in all_ud_offsets:
+            arr_pos = ud_offset
+            while arr_pos + UNIT_DEF_SIZE <= len(rom.data):
+                chunk = rom.data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+                if all(b == 0 for b in chunk):
+                    break
+
+                pid = chunk[0]
+                if pid <= 34 or pid > 255:
+                    arr_pos += UNIT_DEF_SIZE
+                    continue
+                if pid == FINAL_BOSS_PID:  # final boss — never randomize
+                    arr_pos += UNIT_DEF_SIZE
+                    continue
+                if pid in BOSS_PIDS and not include_bosses:
+                    arr_pos += UNIT_DEF_SIZE
+                    continue
+
+                # Resolve original class (override byte first, then jidDefault)
+                orig_jid = chunk[1]
+                if orig_jid == 0:
+                    cd = CharacterData(rom, pid)
+                    orig_jid = cd.jidDefault
+                if orig_jid == 0:
+                    arr_pos += UNIT_DEF_SIZE
+                    continue
+
+                # Determine new class
+                new_jid = orig_jid
+                if rand_classes:
+                    is_monster_orig = orig_jid in MONSTER_JIDS or orig_jid in EXTRA_MONSTER_JIDS
+                    if not is_monster_orig or randomize_monster_classes:
+                        orig_class = ClassData(rom, orig_jid)
+                        is_promoted = bool(orig_class.attributes & CA_PROMOTED)
+                        key = _move_group_key(orig_class.moveTable[0])
+                        candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
+                        new_jid = random.choice(candidates)
+                    # else: keep monster class as-is
+
+                new_class = ClassData(rom, new_jid)
+
+                if rand_classes and new_jid != orig_jid:
+                    rom.data[arr_pos + 1] = new_jid
+
+                # Phase C: item randomization
+                if rand_items:
+                    # If monster classes aren't being randomized and this is a
+                    # limited-pool monster, leave its original weapons untouched.
+                    if not randomize_monster_classes and new_jid in MONSTER_WEAPON_POOLS:
+                        arr_pos += UNIT_DEF_SIZE
+                        total += 1
+                        continue
+
+                    old_items = list(chunk[12:16])
+                    new_items = list(old_items)
+
+                    for slot_idx in range(4):
+                        item_id = old_items[slot_idx]
+                        if item_id == 0:
+                            continue
+                        item = ItemData(rom, item_id)
+                        if not item.is_weapon():
+                            continue
+
+                        # Keep weapon if new class allows this weapon type (ignore rank)
+                        if new_class.baseWexp[item.weapon_type] > 0:
+                            continue
+
+                        # Pick a random weapon the new class can actually use
+                        new_item_id = _pick_weapon_for_type(rom, wep_pools, new_class.baseWexp)
+                        if new_item_id is not None:
+                            new_items[slot_idx] = new_item_id
+                        else:
+                            new_items[slot_idx] = 0
+
+                    # Ensure at least one weapon exists
+                    has_weapon = any(
+                        ItemData(rom, it).is_weapon()
+                        for it in new_items if it != 0
+                    )
+                    if not has_weapon:
+                        new_item_id = _pick_weapon_for_type(rom, wep_pools, new_class.baseWexp)
+                        if new_item_id is not None:
+                            for slot_idx in range(4):
+                                if new_items[slot_idx] == 0:
+                                    new_items[slot_idx] = new_item_id
+                                    break
+
+                    if new_items != old_items:
+                        rom.data[arr_pos + 12 : arr_pos + 16] = bytes(new_items)
+
+                total += 1
+                arr_pos += UNIT_DEF_SIZE
+
+    return total
+
+
 def _build_ud_to_chapters(rom):
     """Build mapping: UD array file offset -> list of chapter names."""
     data = rom.data
@@ -1237,6 +1574,10 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     patched = patch_unit_definitions(rom, modified_pids)
     if patched:
         print(f"Patched {patched} unit definition(s) to use new default classes")
+
+    enemy_patched = randomize_enemies(rom, config)
+    if enemy_patched:
+        print(f"Randomized {enemy_patched} generic enemy unit(s)")
 
     item_rules = config.get('item_randomization', {})
     mode = item_rules.get('mode', 'random')

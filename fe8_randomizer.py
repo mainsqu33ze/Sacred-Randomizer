@@ -116,6 +116,18 @@ Examples:
         print("  enabled: true")
         print("  master_seal_universal: true")
         print("  replace_distribution: true")
+        print("")
+        print("# --- Enemy Randomization (Generic Units) ---")
+        print("# Randomizes generic enemy classes and items with terrain-safe movement grouping.")
+        print("enemy_randomization:")
+        print("  enabled: false")
+        print("  randomize_classes: true")
+        print("  randomize_items: true")
+        print("  include_monsters: false")
+        print("  randomize_monster_classes: false")
+        print("  include_bosses: false")
+        print("  weapon_upgrade_chance: 0")
+        print("  omit_classes: []")
         return
 
     try:
