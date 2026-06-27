@@ -25,14 +25,22 @@ class_randomization:
 # ---------------------------------------------------------------------------
 # Controls how fast characters gain stats per level-up.
 # Modes: false (keep vanilla), 'shuffle' (reorder existing), 'random' (new values), 'pool' (distribute total)
+# Modes for 'character' / 'class':
+#   false       — keep vanilla
+#   'shuffle'   — reorder existing values
+#   'random'    — new gaussian values (uses mean/stddev)
+#   'pool'      — distribute a total across stats (uses pool_total)
+#   <number>   — scale by factor (class only, e.g. 1.3)
+#   'random_buff' — random fractional buff per stat (class only, uses class_buff_range)
 growth_randomization:
   character: random            # Per-character growth rates
-  class: random               # Per-class growth rates (applied on top of character growths)
-  min: 0                     # Minimum growth rate (for 'random' / 'pool' modes)
-  max: 100                   # Maximum growth rate (for 'random' / 'pool' modes)
-  mean: null                 # Mean for 'random' normal distribution (null = use original value)
-  stddev: 10                 # Standard deviation for 'random' normal distribution
-  pool_total: 315            # Total growth pool for 'pool' mode (null = preserve each character's original total)
+  class: random                # Per-class growth rates (mostly impacts generic enemies)
+  class_buff_range: 0.5        # +/- range for 'random_buff' mode (e.g. 0.3 = ±30%)
+  min: 0                       # Minimum clamp for all growth modes
+  max: 100                     # Maximum clamp for all growth modes
+  mean: null                   # Mean for 'random' normal distribution (null = use original value)
+  stddev: 10                   # Standard deviation for 'random' normal distribution
+  pool_total: 315              # Total growth pool for 'pool' mode (null = preserve original total)
 
 # ---------------------------------------------------------------------------
 # BASE STATS
@@ -43,10 +51,15 @@ base_stat_randomization:
   character: random          # Per-character base stats (HP, Str, Skl, Spd, Def, Res, Luck)
   class: random             # Per-class base stats (HP, Pow, Skl, Spd, Def, Res, Con, Mov)
   preserve_base: true        # when class=shuffle: true = swap existing values; false = assign random(0,20)
-  shuffle_con_mov: false      # when class=shuffle: true = include in the class shuffling; false = leave Con and Mov unchanged
+  shuffle_con_mov: false      # when class=shuffle: true = include Con/Mov in the swap; false = leave unchanged
   cross_tier_scramble: false # when class=shuffle: allow swapping across promoted/unpromoted/trainee tiers
   mean: null                 # Mean for 'random' mode (null = use original stat value)
   stddev: 3                  # Standard deviation for 'random' mode
+  con:                       # Separate Con randomization; false = preserve Con in ALL modes
+    enabled: true             # false = never modify Con (scale, shuffle, random all skip it)
+    min: 1                   # Minimum Con for class bases
+    player_min: 1            # Minimum Con for player unit bases
+    stddev: 3                # Standard deviation for Con (separate from global stddev)
 
 # ---------------------------------------------------------------------------
 # ITEMS (Weapons + Inventory)
@@ -88,8 +101,8 @@ weapon_randomization:
 # ---------------------------------------------------------------------------
 # Randomly adds special effects to some weapons.
 weapon_effects:
-  enabled: 10             # false = off; number = percent chance per weapon (e.g. 10 = 10%)
-  poison: 2                  # Relative weight for each effect (higher = more likely when rolling)
+  enabled: 10              # false = off; number = percent chance per weapon (e.g. 10 = 10%)
+  poison: 2                # Relative weight for each effect (higher = more likely)
   nosferatu: 3
   eclipse: 1
   devil: 5
@@ -118,12 +131,14 @@ promotion_items:
 # ENEMY RANDOMIZATION (Generic Units)
 # ---------------------------------------------------------------------------
 # Randomizes generic enemies on maps, ensuring they have functional classes and weapons.
-# Note: This perfectly groups classes by movement properties so enemies placed in
-# mountains or water can still traverse their starting tiles.
+# Classes are grouped by movement type so enemies placed in mountains or water
+# can still traverse their starting tiles.
 enemy_randomization:
-  enabled: true                         # true = enable enemy class and weapon randomization
-  randomize_classes: true                # true = randomize generic enemy classes within tier
-  randomize_items: true                  # true = randomize weapons to match their new class
+  enabled: true                         # true = enable enemy class & weapon randomization
+  randomize_classes: true                # true = randomize generic enemy classes
+  randomize_items: true                  # true = assign weapons compatible with their new class
+  randomize_monster_classes: false       # true = randomize monster enemies into other classes
   include_monsters: false                # true = allow enemies to randomize into monster classes
-  weapon_upgrade_chance: 25               # percent chance (0-100) a unit's weapon is upgraded 1 rank higher
-  include_bosses: false
+  include_bosses: false                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
+  weapon_upgrade_chance: 25              # percent chance (0-100) a unit's weapon tier is improved
+  omit_classes: []                       # List of JID enum names to exclude, e.g. [SHAMAN, MERCENARY]

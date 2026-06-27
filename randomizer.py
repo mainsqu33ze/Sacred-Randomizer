@@ -241,6 +241,47 @@ def _distribute_growth_pool(pool_total, min_g, max_g):
     return vals
 
 
+def _randomize_class_growths(rom, jid, class_shuffle, rules):
+    """Apply one class growth mode to a single JID. Returns True if changed."""
+    jd = ClassData(rom, jid)
+    growths = [jd.growthHP, jd.growthPow, jd.growthSkl,
+               jd.growthSpd, jd.growthDef, jd.growthRes,
+               jd.growthLck]
+
+    min_g = rules.get('min', 0)
+    max_g = rules.get('max', 100)
+    mean = rules.get('mean', None)
+    stddev = rules.get('stddev', 10)
+    pool_total = rules.get('pool_total', None)
+
+    if isinstance(class_shuffle, (int, float)):
+        factor = float(class_shuffle)
+        if factor == 1.0:
+            return False
+        growths = [_scale_stat(g, factor, min_g, max_g) for g in growths]
+    elif class_shuffle == 'shuffle':
+        random.shuffle(growths)
+    elif class_shuffle == 'random':
+        growths = [_randomize_stat(g, mean, stddev, min_g, max_g) for g in growths]
+    elif class_shuffle == 'random_buff':
+        buff_range = rules.get('class_buff_range', 0.5)
+        growths = [
+            _scale_stat(g, 1.0 + random.uniform(-buff_range, buff_range), min_g, max_g)
+            for g in growths
+        ]
+    elif class_shuffle == 'pool':
+        base_total = pool_total if pool_total is not None else sum(growths)
+        growths = _distribute_growth_pool(base_total, min_g, max_g)
+    else:
+        return False
+
+    (jd.growthHP, jd.growthPow, jd.growthSkl,
+     jd.growthSpd, jd.growthDef, jd.growthRes,
+     jd.growthLck) = growths
+    jd.write(rom)
+    return True
+
+
 def randomize_growths(rom, config):
     rules = config.get('growth_randomization', {})
     char_shuffle = rules.get('character', False)
@@ -270,22 +311,13 @@ def randomize_growths(rom, config):
             cd.write(rom)
 
     if class_shuffle:
-        for jid in STANDARD_JIDS:
-            jd = ClassData(rom, jid)
-            growths = [jd.growthHP, jd.growthPow, jd.growthSkl,
-                       jd.growthSpd, jd.growthDef, jd.growthRes,
-                       jd.growthLck]
-            if class_shuffle == 'shuffle':
-                random.shuffle(growths)
-            elif class_shuffle == 'random':
-                growths = [_randomize_stat(g, mean, stddev, min_g, max_g) for g in growths]
-            elif class_shuffle == 'pool':
-                base_total = pool_total if pool_total is not None else sum(growths)
-                growths = _distribute_growth_pool(base_total, min_g, max_g)
-            (jd.growthHP, jd.growthPow, jd.growthSkl,
-             jd.growthSpd, jd.growthDef, jd.growthRes,
-             jd.growthLck) = growths
-            jd.write(rom)
+        from fe8rom import CLASS_COUNT
+        count = 0
+        for jid in range(1, CLASS_COUNT + 1):
+            if _randomize_class_growths(rom, jid, class_shuffle, rules):
+                count += 1
+        if count:
+            print(f"Randomized class growth rates for {count} class(es)")
 
 
 def _scale_stat(val, factor, min_val, max_val):
@@ -302,6 +334,25 @@ def _randomize_stat(orig, mean, stddev, lo, hi):
     return max(lo, min(hi, val))
 
 
+def _get_con_rules(rules, class_enabled):
+    """Return (con_enabled, con_class_min, con_player_min, con_stddev) tuple.
+    
+    If the user explicitly provides a 'con' subsection, use its settings.
+    Otherwise fall back to legacy behaviour (no Con for character random,
+    Con with global stddev for class random).  'min' applies to class bases;
+    'player_min' applies to player unit bases (defaults to 1).
+    """
+    if 'con' in rules:
+        c = rules['con']
+        return (c.get('enabled', True),
+                c.get('min', 1),
+                c.get('player_min', 1),
+                c.get('stddev', rules.get('stddev', 3)))
+    # legacy: character random preserves Con, class random randomizes it
+    is_class_random = isinstance(class_enabled, str) and class_enabled == 'random'
+    return (is_class_random, 1, 1, rules.get('stddev', 3))
+
+
 def randomize_base_stats(rom, config):
     rules = config.get('base_stat_randomization', {})
     char_enabled = rules.get('character', False)
@@ -310,6 +361,8 @@ def randomize_base_stats(rom, config):
     shuffle_con_mov = rules.get('shuffle_con_mov', True)
     mean = rules.get('mean', None)
     stddev = rules.get('stddev', 3)
+
+    con_enabled, con_min, con_player_min, con_stddev = _get_con_rules(rules, class_enabled)
 
     if isinstance(char_enabled, (int, float)) and not isinstance(char_enabled, bool):
         factor = float(char_enabled)
@@ -334,7 +387,7 @@ def randomize_base_stats(rom, config):
             jd.baseSpd = _scale_stat(jd.baseSpd, factor, 0, 25)
             jd.baseDef = _scale_stat(jd.baseDef, factor, 0, 25)
             jd.baseRes = _scale_stat(jd.baseRes, factor, 0, 25)
-            jd.baseCon = _scale_stat(jd.baseCon, factor, 1, 25)
+            jd.baseCon = _scale_stat(jd.baseCon, factor, con_min, 25) if con_enabled else jd.baseCon
             jd.write(rom)
 
     if isinstance(char_enabled, str) and char_enabled == 'shuffle':
@@ -357,6 +410,8 @@ def randomize_base_stats(rom, config):
             cd.baseDef = _randomize_stat(cd.baseDef, mean, stddev, 0, 25)
             cd.baseRes = _randomize_stat(cd.baseRes, mean, stddev, 0, 25)
             cd.baseLck = _randomize_stat(cd.baseLck, mean, stddev, 0, 30)
+            if con_enabled:
+                cd.baseCon = _randomize_stat(cd.baseCon, mean, con_stddev, con_player_min, 25)
             cd.write(rom)
 
     if isinstance(class_enabled, str) and class_enabled == 'shuffle':
@@ -366,19 +421,19 @@ def randomize_base_stats(rom, config):
         else:
             prom, unpr = _split_class_pool(rom)
             groups = [sorted(prom), sorted(unpr), sorted(TRAINEE_JIDS)]
-        stat_count = 8 if shuffle_con_mov else 6
+        stat_count = 8 if shuffle_con_mov and con_enabled else (7 if shuffle_con_mov else 6)
         for group in groups:
             if len(group) < 2:
                 continue
             pairs = []
             for jid in group:
                 jd = ClassData(rom, jid)
+                stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
+                         jd.baseDef, jd.baseRes]
+                if con_enabled and shuffle_con_mov:
+                    stats.append(jd.baseCon)
                 if shuffle_con_mov:
-                    stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                             jd.baseDef, jd.baseRes, jd.baseCon, jd.baseMov]
-                else:
-                    stats = [jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
-                             jd.baseDef, jd.baseRes]
+                    stats.append(jd.baseMov)
                 if sum(stats[:6]) == 0:
                     continue
                 if preserve_base:
@@ -393,8 +448,12 @@ def randomize_base_stats(rom, config):
                 jd = ClassData(rom, jid)
                 (jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
                  jd.baseDef, jd.baseRes) = stats[:6]
+                idx = 6
+                if con_enabled and shuffle_con_mov:
+                    jd.baseCon = stats[idx]
+                    idx += 1
                 if shuffle_con_mov:
-                    jd.baseCon, jd.baseMov = stats[6], stats[7]
+                    jd.baseMov = stats[idx]
                 jd.write(rom)
 
     if isinstance(class_enabled, str) and class_enabled == 'random':
@@ -406,7 +465,8 @@ def randomize_base_stats(rom, config):
             jd.baseSpd = _randomize_stat(jd.baseSpd, mean, stddev, 0, 25)
             jd.baseDef = _randomize_stat(jd.baseDef, mean, stddev, 0, 25)
             jd.baseRes = _randomize_stat(jd.baseRes, mean, stddev, 0, 25)
-            jd.baseCon = _randomize_stat(jd.baseCon, mean, stddev, 1, 25)
+            if con_enabled:
+                jd.baseCon = _randomize_stat(jd.baseCon, mean, con_stddev, con_min, 25)
             jd.write(rom)
 
 

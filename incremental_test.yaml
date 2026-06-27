@@ -1,18 +1,25 @@
-# Incremental test config: start with everything disabled, enable features one by one
-# Usage: python fe8_randomizer.py ROM.GBA -c incremental_test.yaml -o test.gba
+# Minimal config that enables all features with default settings.
+# Use this to verify every feature runs without errors:
+#   python fe8_randomizer.py ROM.GBA -c incremental_test.yaml -o test.gba
 
 seed: 42
 
 class_randomization:
-  enabled: true
+  mode: shuffle
+  manakete_count: 1
 
 growth_randomization:
-  enabled: shuffle
+  character: random
+  class: random
 
 base_stat_randomization:
-  enabled: shuffle
+  character: random
+  class: shuffle
+  preserve_base: true
+  con:
+    enabled: true
 
-affinity_randomization:
+item_randomization:
   enabled: true
 
 weapon_randomization:
@@ -21,8 +28,14 @@ weapon_randomization:
 weapon_effects:
   enabled: 10
 
+affinity_randomization:
+  enabled: true
+
 promotion_items:
   enabled: true
 
-item_randomization:
-  enabled: true # When this gets set to true the visual bug appears 
+enemy_randomization:
+  enabled: true
+  randomize_classes: true
+  randomize_items: true
+  include_bosses: true

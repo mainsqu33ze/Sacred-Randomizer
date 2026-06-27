@@ -6,154 +6,193 @@ Randomizes **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs.
 
 - Python 3.8+
 - `pip install -r requirements.txt`
+- An FE8U (Sacred Stones) ROM — not included
 
-## Usage
+## Quick start
 
 ```
-python fe8_randomizer.py ROM.GBA -c config.yaml -o output.gba
+python fe8_randomizer.py ROM.GBA -c config.yaml -o randomized.gba
 python fe8_randomizer.py ROM.GBA --seed 42          # override config seed
-python fe8_randomizer.py ROM.GBA --dump > template.yaml  # print default config
+python fe8_randomizer.py ROM.GBA --dump > ref.yaml  # print all defaults
 ```
 
-Without `-o`, output goes to `ROM_randomized.gba`. You must provide your own FE8U (Sacred Stones) ROM — it is not included.
+Without `-o`, output goes to `ROM_randomized.gba`.
 
 ## Configuration
 
-All features are controlled by `config.yaml`:
+All features are controlled by `config.yaml`. Every option has sensible defaults — start with the provided `config.yaml` and tweak what you like.
 
-| Section | Feature | Modes |
-|---|---|---|
-| `class_randomization` | Shuffle/randomize classes among playable characters | `mode`, `manakete_count`, `omit_classes` |
-| `growth_randomization` | Randomize growth rates | `false`, `shuffle`, `random`, `pool` |
-| `base_stat_randomization` | Randomize base stats | `false`, `shuffle`, `random`, multiplier + `cross_tier_scramble` |
-| `item_randomization` | Assign weapons matching new class | `true/false` |
-| `weapon_randomization` | Randomize weapon stats (MT/HIT/WT/CRT) | per-stat `false`, `random`, or multiplier |
-| `weapon_effects` | Add special effects (poison, nosferatu, etc.) | percent chance + per-effect weights |
-| `affinity_randomization` | Randomize character affinities | `true/false` |
+### Features at a glance
 
-## Examples
+| Section | What it does |
+|---|---|
+| `class_randomization` | Shuffles classes among playable characters |
+| `growth_randomization` | Randomizes stat growth rates (character & class) |
+| `base_stat_randomization` | Randomizes or swaps base stats |
+| `item_randomization` | Updates inventories to match new classes |
+| `weapon_randomization` | Randomizes weapon stats (MT/HIT/WT/CRT) |
+| `weapon_effects` | Adds special effects (poison, nosferatu, etc.) |
+| `affinity_randomization` | Randomizes support affinities |
+| `promotion_items` | Unifies all promotion items as Master Seals |
+| `enemy_randomization` | Randomizes generic enemy classes & loadouts on maps |
 
 ### class_randomization
 
-Shuffle all playable characters into random classes:
-
 ```yaml
 class_randomization:
-  mode: shuffle                 # 'shuffle' (permute, no repeats) or 'random' (sample with replacement)
-  manakete_count: 1             # max characters to become Manakete (0 = none)
-  omit_classes: []              # case-insensitive JID names to exclude from pools
+  mode: shuffle          # 'shuffle' (permute, no repeats) or 'random' (sample with repeats)
+  manakete_count: 1      # max characters that become Manakete (0 = none)
+  omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
 ```
 
-`mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees — no class is assigned twice. `mode: random` picks independently for each character, so multiple characters can end up with the same class.
+`mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
 
-`manakete_count` controls how many characters (0–N) become Manakete (`JID.MANAKETE_MYRRH`) with a Dragonstone. Applied after the mode logic, overwriting any previous class assignment. `JID.MANAKETE` (14) is excluded from `STANDARD_JIDS` and never appears in pools.
-
-Class stat block shuffling (swapping HP/Pow/Skl/Spd/Def/Res/Con/Mov between classes) is under `base_stat_randomization.class: shuffle` — see below.
+`manakete_count` overwrites the mode logic for that many characters, giving them `JID.MANAKETE_MYRRH` with Dragonstone+Vulneraries.
 
 ### growth_randomization
 
-Tight gaussian spread near original values (each growth slightly tweaked):
+Controls how fast units gain stats per level-up. You can set modes for **character** growths (affects playable units) and **class** growths (affects generic enemies):
 
 ```yaml
 growth_randomization:
-  character: random
-  class: false
-  mean: null          # center each growth on its original value
-  stddev: 5           # ~68% of values within ±5 of original
-  min: 0
-  max: 100
+  character: random       # false | shuffle | random | pool
+  class: random           # false | shuffle | random | random_buff | pool | <number>
+  class_buff_range: 0.5   # ±range for random_buff mode (e.g. 0.3 = ±30%)
+  min: 0                  # clamp floor
+  max: 100                # clamp ceiling
+  mean: null              # gaussian center (null = original value)
+  stddev: 10              # gaussian standard deviation
+  pool_total: null        # for 'pool' mode (null = preserve original total)
 ```
 
-Wild variation with a 315-point pool distributed randomly:
+**Modes:**
+| Mode | Character | Class | Effect |
+|---|---|---|---|
+| `false` | ✅ | ✅ | Keep vanilla |
+| `shuffle` | ✅ | ✅ | Permute the 7 growth values within each unit/class |
+| `random` | ✅ | ✅ | Gaussian with optional mean/stddev |
+| `pool` | ✅ | ✅ | Distribute `pool_total` across stats randomly |
+| `<number>` | — | ✅ | Scale all growths by factor (e.g. `1.3` = +30%) |
+| `random_buff` | — | ✅ | Each growth × `1.0 ± random(0, class_buff_range)` |
 
-```yaml
-growth_randomization:
-  character: pool
-  class: false
-  pool_total: 315     # average total across all playable units
-  min: 0
-  max: 100
-```
-
-Characters will have roughly the same total potential, but which stats get the points is completely reshuffled. Use `pool_total: null` to preserve each unit's original total while redistributing.
+Class growths affect JIDs 1–128 (all classes including monsters), which primarily impacts generic enemy stats since playable characters use their own growth rates.
 
 ### base_stat_randomization
 
-Swap stat arrays between classes within the same promotion tier:
+Swap or randomize starting stats for characters and/or classes:
 
 ```yaml
 base_stat_randomization:
-  class: shuffle            # swap stat blocks among same-tier classes
-  character: false
+  character: false        # false | shuffle | random | <multiplier>
+  class: false            # false | shuffle | random | <multiplier>
+  preserve_base: true     # class=shuffle: swap values vs assign random(0,20)
+  shuffle_con_mov: true   # class=shuffle: include Con/Mov in the swap
+  cross_tier_scramble: false  # class=shuffle: mix all tiers together
+  mean: null              # gaussian center (null = original value)
+  stddev: 3               # gaussian standard deviation
+  con:                    # separate Con control — affects ALL modes (scale/shuffle/random)
+    enabled: true         # false = never modify Con in any mode
+    min: 1                # minimum Con for class bases
+    player_min: 1         # minimum Con for player unit bases
+    stddev: 3             # stddev for Con (separate from global stddev)
 ```
 
-No class ends up with 0 HP — only whole stat blocks are swapped (HP/Pow/Skl/Spd/Def/Res/Con/Mov stay together, or just HP/Pow/Skl/Spd/Def/Res if `shuffle_con_mov: false`). Promoted ↔ promoted, unpromoted ↔ unpromoted, trainees ↔ trainees. Use `cross_tier_scramble: true` to shuffle across all tiers together. Use `preserve_base: false` to assign random(0,20) instead of swapping existing values.
+Scale all player stats down for a harder game:
+```yaml
+character: 0.8   # 80% of original stats
+```
 
-Scale all player stats down by 20% for a harder game:
+Shuffle stat blocks between same-tier classes:
+```yaml
+class: shuffle
+cross_tier_scramble: false   # keeps promoted/unpromoted/trainee pools separate
+```
 
+When `con.enabled: false`, Con is preserved in **all** modes (scale, shuffle, random). In shuffle mode this overrides `shuffle_con_mov` for Con only — Mov is still controlled by `shuffle_con_mov`.
+
+Randomize Con independently with its own minimum and spread:
 ```yaml
 base_stat_randomization:
-  character: 0.8     # allies have 80% of their original stats
-  class: false
+  class: random
+  con:
+    enabled: true
+    min: 3            # class Con never below 3
+    player_min: 1     # player Con still allowed as low as 1
+    stddev: 5         # wider spread than the global stddev=3
 ```
 
-Gaussian shuffle centered on original stats, narrow spread:
+### item_randomization
+
+After class randomization, updates inventories so units get weapons their new class can use:
 
 ```yaml
-base_stat_randomization:
-  character: random
-  class: false
-  mean: null
-  stddev: 2           # typically ±2 from original
+item_randomization:
+  enabled: true
+  mode: random              # 'random' = pick from weapon pools; 'shuffle' = permute all items
+  randomize_events: false   # also randomize GiveItem events (slow)
 ```
+
+- **`mode: random`**: picks a random usable weapon for each slot. Existing weapons are kept only if the class+rank supports them.
+- **`mode: shuffle`**: permutes all weapons across unit definitions without changing the pool.
+- Manaketes always get `[Dragonstone, Vulnerary, Vulnerary, empty]`.
 
 ### weapon_randomization
 
-Scale all weapon might by 1.5x but randomize hit with a wide spread:
+Randomizes numeric stats (Might / Hit / Weight / Crit) independently per stat:
 
 ```yaml
 weapon_randomization:
+  enabled: true             # false to skip all weapon stat changes
+  might: true               # false=skip, true=gaussian, <number>=multiplier
+  hit: true
+  weight: true
+  crit: true
+  mean: null                # gaussian center (null = original value)
+  stddev: 5                 # global stddev (used if per-stat not set)
+  might_stddev: 3           # per-stat overrides
+  hit_stddev: 20
+  weight_stddev: 3
+  crit_stddev: 5
+  min_might: 1              # clamp bounds per stat
+  max_might: 20
+  min_hit: 30
+  max_hit: 120
+  min_weight: 1
+  max_weight: 20
+  min_crit: 0
+  max_crit: 30
+```
+
+Staves are always skipped (staff might stays 0).
+
+Scale all weapon MT by 1.5× while randomizing hit widely:
+```yaml
+weapon_randomization:
   enabled: true
-  might: 1.5               # scale MT by 1.5x
-  hit: random              # randomize hit with gaussian
-  weight: false            # leave weight unchanged
-  crit: false              # leave crit unchanged
-  mean: null
-  hit_stddev: 25           # wide spread on hit
+  might: 1.5
+  hit: random
+  weight: false
+  crit: false
+  hit_stddev: 25
   min_hit: 20
   max_hit: 100
 ```
 
-Fully gaussian — every stat randomized with per-stat stddev:
-
-```yaml
-weapon_randomization:
-  enabled: random
-  might_stddev: 3
-  hit_stddev: 20
-  weight_stddev: 3
-  crit_stddev: 8
-  min_might: 1
-  max_might: 25
-```
-
-Staves are always skipped for might randomization (staff might stays 0).
-
 ### weapon_effects
 
-Poison is everywhere, eclipse is a once-in-a-run discovery:
+Adds special effects to weapons at a configurable chance:
 
 ```yaml
 weapon_effects:
-  enabled: 30        # 30% per weapon to gain an effect
-  poison: 40         # weight 40 — appears often
+  enabled: 30          # percent chance per weapon to gain an effect (0 or false = off)
+  poison: 40           # relative weight — higher = more likely
   nosferatu: 10
-  eclipse: 1         # weight 1 — extremely rare
+  eclipse: 1           # extremely rare
   devil: 8
   stone: 3
 ```
 
-Weapons that already have an effect (e.g., Poison Sword) can be overwritten with a different random effect. Story weapons (Rapier, Sieglinde, Siegmund, Reginleif) and monster-exclusive items are never affected.
+Weights control how often each effect is chosen. Story weapons (Rapier, Sieglinde, etc.) and monster-exclusive items are never affected.
 
 ### affinity_randomization
 
@@ -162,65 +201,99 @@ affinity_randomization:
   enabled: true
 ```
 
-Assigns a random affinity (fire, thunder, wind, ice, light, dark, or anima — values 1–7) to every playable character. Affinities affect support bonuses.
+Assigns a random affinity (Fire, Thunder, Wind, Ice, Light, Dark, or Anima — values 1–7) to every playable character. Affinities affect support bonuses.
 
-### item_randomization
+### promotion_items
+
+Unifies all promotion items to work as universal Master Seals:
 
 ```yaml
-item_randomization:
-  enabled: true
+promotion_items:
+  enabled: true                    # true = apply Master Seal logic
+  master_seal_universal: true      # any unpromoted class can promote
+  replace_distribution: true       # replace chests/drops/events with Master Seal (0x88)
 ```
 
-After class randomization, each unit's inventory is updated to include weapons their new class can use. Existing weapons are kept only if the unit's weapon rank supports them. Manaketes get `[Dragonstone, Vulnerary, Vulnerary, empty]`.
+When enabled, every promotion item (Heaven Seal, Ocean Seal, etc.) behaves like a Master Seal — any unpromoted class can use it and the game's internal class-eligibility tables are patched. Disable `replace_distribution` to keep the original promo item types in chests and drops.
+
+### enemy_randomization
+
+Randomizes generic enemy classes and loadouts per map:
+
+```yaml
+enemy_randomization:
+  enabled: true
+  randomize_classes: true            # randomize generic enemy classes
+  randomize_items: true              # assign weapons compatible with new class
+  randomize_monster_classes: false   # true = randomize monster enemies too
+  include_monsters: false            # true = let enemies become monster classes
+  include_bosses: false              # true = include bosses (PIDs 0x40–0x63, etc.)
+  weapon_upgrade_chance: 25          # % chance per unit to get a weapon tier upgrade
+  omit_classes: []                   # JID names to exclude, e.g. [SHAMAN]
+```
+
+Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain.
+
+**Exclusions:**
+- Manakete, Bard, Dancer, Fleet, Phantom, Demon King, and JIDs 0x67–0x7B never appear in enemy pools.
+- Final boss (PID 0xBE) is always excluded regardless of `include_bosses`.
+- Lords and trainees are excluded.
+- Set `include_monsters: true` to allow monster classes in the pool. Set `randomize_monster_classes: true` to also randomize enemies that start as monsters.
 
 ## Full reference config
 
 ```yaml
-# FE8 Randomizer — every available option with defaults
+# FE8 Randomizer — every option with defaults
 
 seed: 0
 
 class_randomization:
-  mode: shuffle                 # 'shuffle' (permute) or 'random' (sample with replacement)
-  manakete_count: 1             # max characters to become Manakete (0 = none)
-  omit_classes: []              # case-insensitive JID names to exclude from pools
+  mode: shuffle
+  manakete_count: 1
+  omit_classes: []
 
 growth_randomization:
-  character: false              # false, shuffle, random, or pool
-  class: false                  # false, shuffle, random, or pool
-  min: 0                        # clamp floor for random/pool modes
-  max: 100                      # clamp ceiling for random/pool modes
-  mean: null                    # gaussian center (null = original value)
-  stddev: 10                    # gaussian standard deviation
-  pool_total: null              # total growth pool for pool mode (null = original sum)
+  character: false
+  class: false
+  class_buff_range: 0.5
+  min: 0
+  max: 100
+  mean: null
+  stddev: 10
+  pool_total: null
 
 base_stat_randomization:
-  character: false              # false, shuffle, random, or multiplier
-  class: false                  # false, shuffle, random, or multiplier
-  preserve_base: true           # class=shuffle: swap existing values vs assign random(0,20)
-  shuffle_con_mov: true         # class=shuffle: false = leave Con and Mov unchanged
-  cross_tier_scramble: false    # class=shuffle: allow swapping across all tiers together
-  mean: null                    # gaussian center (null = original value)
-  stddev: 3                     # gaussian standard deviation
+  character: false
+  class: false
+  preserve_base: true
+  shuffle_con_mov: true
+  cross_tier_scramble: false
+  mean: null
+  stddev: 3
+  con:
+    enabled: true
+    min: 1
+    player_min: 1
+    stddev: 3
 
 item_randomization:
-  enabled: true                 # update unit inventories to match new classes
-  mode: random                  # random or shuffle
-  randomize_events: false       # randomize GiveItem event commands
+  enabled: true
+  mode: random
+  randomize_events: false
 
 weapon_randomization:
-  enabled: false                # truthy gate to enable weapon stat changes
-  might: true                   # per-stat: false to skip, true for gaussian,
-  hit: true                     #           or a multiplier number
+  enabled: false
+  might: true
+  hit: true
   weight: true
   crit: true
-  mean: null                    # gaussian center (null = original value)
-  stddev: 5                     # global gaussian stddev (used if per-stat not set)
-  might_stddev: 3               # per-stat stddev overrides
+  mean: null
+  stddev: 5
+  might_stddev: 3
   hit_stddev: 20
   weight_stddev: 3
   crit_stddev: 5
-  min_might: 1                  # per-stat clamp bounds
+  min_might: 1
   max_might: 20
   min_hit: 30
   max_hit: 120
@@ -230,19 +303,28 @@ weapon_randomization:
   max_crit: 30
 
 weapon_effects:
-  enabled: false                # false to disable, or percent chance (e.g., 25)
-  poison: true                  # true = weight 1, number = custom weight,
-  nosferatu: true               # false = excluded from pool
+  enabled: false
+  poison: 2
+  nosferatu: 3
   eclipse: 1
   devil: 5
-  stone: 3
+  stone: 1
 
 affinity_randomization:
-  enabled: false                # assign random affinity (1–7) to all playables
+  enabled: false
 
 promotion_items:
-  enabled: true                 # all promotion items act as Master Seals
-  master_seal_universal: true   # any unpromoted class can use them
-  replace_distribution: true    # replace drops/chests/events with Master Seal (0x88)
-```
+  enabled: true
+  master_seal_universal: true
+  replace_distribution: true
 
+enemy_randomization:
+  enabled: true
+  randomize_classes: true
+  randomize_items: true
+  randomize_monster_classes: false
+  include_monsters: false
+  include_bosses: false
+  weapon_upgrade_chance: 25
+  omit_classes: []
+```

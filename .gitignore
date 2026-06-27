@@ -6,3 +6,12 @@ scripts/_tmp_chapter_dump.py
 b_test_randomizer_rom.txt
 test_out.txt
 test_randomized.txt
+test_con.txt
+test_con2.txt
+test_con3.txt
+test_growth_buff.txt
+test_growth_random.txt
+test_growth_scale.txt
+test_growth_scale2.txt
+test_incr.txt
+test_verbose.txt

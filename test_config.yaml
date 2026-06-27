@@ -1,15 +1,21 @@
-# Default config generated from ROM
+# Dev test config — exercise all features with defaults
 seed: 0
+
 class_randomization:
   mode: shuffle
   manakete_count: 1
   omit_classes: []
+
 growth_randomization:
-  character: false
-  class: false
+  character: shuffle
+  class: shuffle
+  class_buff_range: 0.5
+  min: 0
+  max: 100
   mean: null
   stddev: 10
   pool_total: null
+
 base_stat_randomization:
   character: false
   class: false
@@ -18,10 +24,17 @@ base_stat_randomization:
   cross_tier_scramble: false
   mean: null
   stddev: 3
+  con:
+    enabled: true
+    min: 1
+    player_min: 1
+    stddev: 3
+
 item_randomization:
   enabled: true
   mode: random
   randomize_events: false
+
 weapon_randomization:
   enabled: false
   might: true
@@ -42,15 +55,18 @@ weapon_randomization:
   max_weight: 20
   min_crit: 0
   max_crit: 30
+
 weapon_effects:
   enabled: false
-  poison: true
-  nosferatu: true
+  poison: 2
+  nosferatu: 3
   eclipse: 1
   devil: 5
   stone: 3
+
 affinity_randomization:
   enabled: false
+
 promotion_items:
   enabled: true
   master_seal_universal: true
@@ -60,5 +76,8 @@ enemy_randomization:
   enabled: true
   randomize_classes: true
   randomize_items: true
+  randomize_monster_classes: false
   include_monsters: true
+  include_bosses: false
   weapon_upgrade_chance: 25
+  omit_classes: []
