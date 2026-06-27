@@ -102,6 +102,36 @@ MONSTER_WEAPON_POOLS = {
 
 CA_PROMOTED = 0x100  # bit 8 of class attributes
 
+# Male/female class pairs — same class with gendered variant.
+# Both classes in each pair get the same promotion gains (max of the two values).
+MALE_FEMALE_PAIRS = [
+    (JID.EPHRAIM_LORD, JID.EIRIKA_LORD),
+    (JID.EPHRAIM_MASTER_LORD, JID.EIRIKA_MASTER_LORD),
+    (JID.CAVALIER, JID.CAVALIER_F),
+    (JID.PALADIN, JID.PALADIN_F),
+    (JID.ARMOR_KNIGHT, JID.ARMOR_KNIGHT_F),
+    (JID.GENERAL, JID.GENERAL_F),
+    (JID.MERCENARY, JID.MERCENARY_F),
+    (JID.HERO, JID.HERO_F),
+    (JID.MYRMIDON, JID.MYRMIDON_F),
+    (JID.SWORDMASTER, JID.SWORDMASTER_F),
+    (JID.ASSASSIN, JID.ASSASSIN_F),
+    (JID.ARCHER, JID.ARCHER_F),
+    (JID.SNIPER, JID.SNIPER_F),
+    (JID.RANGER, JID.RANGER_F),
+    (JID.WYVERN_RIDER, JID.WYVERN_RIDER_F),
+    (JID.WYVERN_LORD, JID.WYVERN_LORD_F),
+    (JID.WYVERN_KNIGHT, JID.WYVERN_KNIGHT_F),
+    (JID.MAGE, JID.MAGE_F),
+    (JID.SAGE, JID.SAGE_F),
+    (JID.MAGE_KNIGHT, JID.MAGE_KNIGHT_F),
+    (JID.BISHOP, JID.BISHOP_F),
+    (JID.SHAMAN, JID.SHAMAN_F),
+    (JID.DRUID, JID.DRUID_F),
+    (JID.SUMMONER, JID.SUMMONER_F),
+    (JID.GREAT_KNIGHT, JID.GREAT_KNIGHT_F),
+]
+
 TRAINEE_PIDS = {PID.ROSS, PID.AMELIA, PID.EWAN}
 TRAINEE_JIDS = {JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT}
 
@@ -473,6 +503,42 @@ def randomize_base_stats(rom, config):
             if con_enabled:
                 jd.baseCon = _randomize_stat(jd.baseCon, mean, con_stddev, con_min, 25)
             jd.write(rom)
+
+
+def synchronize_promotion_gains(rom):
+    """Sync promotionHp/Pow/Skl/Spd/Def/Res between male/female class pairs.
+
+    For each MALE_FEMALE_PAIRS entry, reads both classes' promotion stat
+    bonuses, takes the higher value per stat, and writes the max back to
+    both.  This ensures e.g. Hero and Hero_F grant the same promotion
+    bonuses regardless of which gendered variant a unit promotes into.
+    """
+    changed = 0
+    for male_jid, female_jid in MALE_FEMALE_PAIRS:
+        try:
+            jd_m = ClassData(rom, male_jid)
+            jd_f = ClassData(rom, female_jid)
+        except Exception:
+            continue
+        fields = ['promotionHp', 'promotionPow', 'promotionSkl',
+                  'promotionSpd', 'promotionDef', 'promotionRes']
+        dirty = False
+        for f in fields:
+            vm = getattr(jd_m, f)
+            vf = getattr(jd_f, f)
+            best = max(vm, vf)
+            if vm != best:
+                setattr(jd_m, f, best)
+                dirty = True
+            if vf != best:
+                setattr(jd_f, f, best)
+                dirty = True
+        if dirty:
+            jd_m.write(rom)
+            jd_f.write(rom)
+            changed += 1
+    if changed:
+        print(f"Synchronized promotion gains for {changed} class pair(s)")
 
 
 def randomize_affinity(rom, config):
@@ -1927,6 +1993,7 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     modified_pids = randomize_class(rom, config)
     randomize_growths(rom, config)
     randomize_base_stats(rom, config)
+    synchronize_promotion_gains(rom)
     randomize_affinity(rom, config)
     randomize_weapon_stats(rom, config)
     randomize_weapon_effects(rom, config)

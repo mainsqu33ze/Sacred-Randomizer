@@ -25,10 +25,11 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 ### Features at a glance
 
 | Section | What it does |
-|---|---|
+|---|---|---|
 | `class_randomization` | Shuffles classes among playable characters |
 | `growth_randomization` | Randomizes stat growth rates (character & class) |
 | `base_stat_randomization` | Randomizes or swaps base stats |
+| `promo_gain_sync` | Syncs promotion stat bonuses between male/female class pairs |
 | `item_randomization` | Updates inventories to match new classes |
 | `weapon_randomization` | Randomizes weapon stats (MT/HIT/WT/CRT) |
 | `weapon_effects` | Adds special effects (poison, nosferatu, etc.) |
@@ -119,6 +120,7 @@ When `con.enabled: false`, Con is preserved in **all** modes (scale, shuffle, ra
 Randomize Con independently with its own minimum and spread:
 ```yaml
 base_stat_randomization:
+  character: false
   class: random
   con:
     enabled: true
@@ -126,6 +128,12 @@ base_stat_randomization:
     player_min: 1     # player Con still allowed as low as 1
     stddev: 5         # wider spread than the global stddev=3
 ```
+
+### promo_gain_sync
+
+Always active (no config toggle). Synchronizes the class promotion stat bonuses (`promotionHp/Pow/Skl/Spd/Def/Res`) between every male/female class pair — for each stat, whichever variant has the higher bonus "wins" and both classes get that value.
+
+Class pairs synced: Cavalier/Cavalier_F, General/General_F, Hero/Hero_F, Myrmidon/Myrmidon_F, Swordmaster/Swordmaster_F, Assassin/Assassin_F, Mage/Mage_F, Wyvern_Rider/Wyvern_Rider_F, and all other gendered playable class pairs (25 pairs total). This ensures that promoting into Hero vs Hero_F gives identical stat bonuses regardless of gender.
 
 ### item_randomization
 
