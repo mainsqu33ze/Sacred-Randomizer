@@ -74,6 +74,10 @@ promotion_items:
   master_seal_universal: true
   replace_distribution: true
 
+loot_randomization:
+  enabled: true
+  mode: random
+
 enemy_randomization:
   enabled: true
   randomize_classes: true

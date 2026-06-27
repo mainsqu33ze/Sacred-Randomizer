@@ -36,6 +36,10 @@ affinity_randomization:
 promotion_items:
   enabled: true
 
+loot_randomization:
+  enabled: true
+  mode: shuffle
+
 enemy_randomization:
   enabled: true
   randomize_classes: true

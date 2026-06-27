@@ -716,29 +716,105 @@ def _pick_weapon_for_type(rom, weapon_pools, char_ranks):
 
 
 def _scan_giveitem_events(rom):
-    """Yield (offset, item_id) for GiveItem (0x1E) commands in chapter data range.
-    
-    Filters: slot must be 0-3, item_id must be a valid weapon (1-0xC0, 
-    excluding monster/story items). Only scans 0x088B0000-0x088CFFFF.
+    """Yield (offset, item_id) for GiveItem commands in event data region.
+
+    Searches for the 40-format GiveItem command:
+      40 0A 00 00 40 1F 59 08 40 05 [slot] 00 [item_id_u32] [pid_field]
+    at event data region 0x08800000-0x08A00000.
     """
     data = rom.data
-    lo = 0x8B0000
-    hi = 0x8D0000
+    lo = rom_offset(0x08800000)
+    hi = min(rom_offset(0x08A00000), len(data))
+    hdr = b'\x40\x0A\x00\x00\x40\x1F\x59\x08\x40\x05'
     pos = lo
     seen = set()
     while True:
-        pos = data.find(b'\x1E', pos)
-        if pos == -1 or pos >= hi:
+        pos = data.find(hdr, pos, hi)
+        if pos == -1:
             break
-        if pos + 2 >= len(data):
+        if pos + 20 > len(data):
             break
-        slot = data[pos + 1]
-        item_id = data[pos + 2]
-        if 0 <= slot <= 3 and 0 < item_id < 0xC0:
+        item_id = struct.unpack_from('<I', data, pos + 12)[0]
+        if 0 < item_id < 0xC0:
             if pos not in seen:
                 seen.add(pos)
                 yield pos, item_id
         pos += 1
+
+
+def _scan_loot_events(rom):
+    """Yield (offset, item_id) for GiveItem (40-format) commands in event data.
+
+    Delegates to _scan_giveitem_events but filters out promotion items
+    (including Master Seal placed by Phase 9), story-exclusive items,
+    monster-blocked items, and dummy items — these are not loot.
+    """
+    loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
+    loot_excluded.update(PROMOTION_ITEM_IDS)
+    loot_excluded.update({0x3D, 0x44, 0x8A})  # dummy items
+    for offset, item_id in _scan_giveitem_events(rom):
+        if item_id not in loot_excluded:
+            yield offset, item_id
+
+
+def _build_loot_pool(rom):
+    """Build list of eligible item IDs for random loot replacement.
+
+    Includes all items 0x01-0xBF that are not monster-blocked,
+    story-exclusive, or dummy entries.
+    """
+    excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
+    excluded.update({0x3D, 0x44, 0x8A})  # dummy items
+    excluded.update(PROMOTION_ITEM_IDS)  # promotion items reserved for promo phase
+    pool = []
+    for item_id in range(1, 0xC0):
+        if item_id not in excluded:
+            pool.append(item_id)
+    return pool
+
+
+def _shuffle_loot(rom):
+    """Collect all GiveItem loot item IDs, shuffle them, and redistribute."""
+    items = list(_scan_loot_events(rom))
+    if len(items) < 2:
+        return 0
+    shuffled_ids = [item_id for _, item_id in items]
+    random.shuffle(shuffled_ids)
+    for (offset, _), new_id in zip(items, shuffled_ids):
+        cur = struct.unpack_from('<I', rom.data, offset + 12)[0]
+        if cur != new_id:
+            struct.pack_into('<I', rom.data, offset + 12, new_id)
+    return len(items)
+
+
+def _randomize_loot(rom):
+    """Replace each GiveItem loot item with a random eligible replacement."""
+    pool = _build_loot_pool(rom)
+    if not pool:
+        return 0
+    patched = 0
+    for offset, item_id in _scan_loot_events(rom):
+        new_id = random.choice(pool)
+        if new_id != item_id:
+            struct.pack_into('<I', rom.data, offset + 12, new_id)
+            patched += 1
+    return patched
+
+
+def randomize_loot(rom, config):
+    """Randomize loot items from all GiveItem events.
+
+    Two modes controlled by ``loot_randomization.mode``:
+      * ``'shuffle'`` — collect all items, permute them, redistribute.
+      * ``'random'`` — each item replaced with a random eligible item.
+    """
+    rules = config.get('loot_randomization', {})
+    if not rules.get('enabled', False):
+        return 0
+    mode = rules.get('mode', 'random')
+    if mode == 'shuffle':
+        return _shuffle_loot(rom)
+    return _randomize_loot(rom)
 
 
 def randomize_event_items(rom, modified_pids):
@@ -770,7 +846,7 @@ def randomize_event_items(rom, modified_pids):
 
         new_item_id = random.choice(candidates)
         if new_item_id != item_id:
-            data[offset + 2] = new_item_id
+            struct.pack_into('<I', data, offset + 12, new_item_id)
             patched += 1
 
     return patched
@@ -1208,21 +1284,21 @@ def randomize_promotion_items(rom, config):
         print(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
 
         # Phase 9: Replace promotion items in GiveItem event commands
-        # Scans entire ROM data section for GiveItem (0x1E) event commands
-        # with slot 0-3 and replaces any promotion item with Master Seal 0x88.
+        # Scans ROM data section for 40-format GiveItem commands
+        # and replaces any promotion item with Master Seal 0x88.
         ev_replaced = 0
-        lo = 0x0800000  # file offset for GBA address 0x08800000
-        hi = min(0x1000000, len(data))  # end of ROM data
+        hdr = b'\x40\x0A\x00\x00\x40\x1F\x59\x08\x40\x05'
+        lo = rom_offset(0x08800000)
+        hi = rom_offset(0x08A00000)
         pos = lo
-        while pos + 2 < hi:
-            pos = data.find(b'\x1E', pos, hi)
+        while pos + 20 < hi:
+            pos = data.find(hdr, pos, hi)
             if pos == -1:
                 break
-            slot = data[pos + 1]
-            item_id = data[pos + 2]
-            if 0 <= slot <= 3 and item_id in PROMOTION_ITEM_IDS:
-                if data[pos + 2] != MASTER_SEAL_ITEM_ID:
-                    data[pos + 2] = MASTER_SEAL_ITEM_ID
+            item_id = struct.unpack_from('<I', data, pos + 12)[0]
+            if item_id in PROMOTION_ITEM_IDS:
+                if item_id != MASTER_SEAL_ITEM_ID:
+                    struct.pack_into('<I', data, pos + 12, MASTER_SEAL_ITEM_ID)
                     ev_replaced += 1
             pos += 1
         if ev_replaced:
@@ -1617,6 +1693,9 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
           fill in promotions appropriate for the NEW class.
       (C) The PaletteIndexTable (palette IDs) is left untouched — the
           character keeps their palette colours.
+      (D) For characters with an all-zero PaletteIndexTable (e.g. Eirika,
+          Ephraim), borrow a donor's PaletteIndexTable entry whose
+          PaletteClassTable maps the same new class JID.
 
     Returns the number of byte changes made.
     """
@@ -1624,13 +1703,32 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
         return 0
 
     import struct
-    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
+    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
 
     pal_class_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
     pal_class_off = pal_class_gba - ROM_BASE
 
+    pal_idx_gba = struct.unpack('<I', rom.data[PALETTE_INDEX_TABLE_PTR_OFF:PALETTE_INDEX_TABLE_PTR_OFF + 4])[0]
+    pal_idx_off = pal_idx_gba - ROM_BASE
+
     base_promo_lookup = _build_base_promo_lookup(rom)
     trainee_lookup = _build_trainee_chain_lookup(rom)
+
+    # Pre-build donor lookup (before PaletteClassTable gets modified)
+    # Maps class JID -> [donor PIDs with non-zero PaletteIndexTable]
+    class_to_donors = {}
+    for donor_pid in range(1, 256):
+        idx_off = pal_idx_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE
+        if idx_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        idx_entry = rom.data[idx_off:idx_off + PALETTE_ENTRY_SIZE]
+        if all(b == 0 for b in idx_entry):
+            continue
+        cls_off = pal_class_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE
+        cls_entry = rom.data[cls_off:cls_off + PALETTE_ENTRY_SIZE]
+        for b in cls_entry:
+            if b != 0:
+                class_to_donors.setdefault(b, []).append(donor_pid)
 
     count = 0
     for pid in sorted(pid_set):
@@ -1669,13 +1767,11 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
         is_promoted = bool(jd.attributes & 0x100)
 
         if new_jid in TRAINEE_JIDS:
-            # Trainee: replace entire entry with new trainee chain
             chain = trainee_lookup.get(new_jid, [])
             n = len(chain)
             new[0] = new_jid
             for i in range(1, 7):
                 new[i] = chain[i - 1] if i - 1 < n else 0
-            # Supplement unfilled via ClassData chain
             base_jid = jd.jidPromotion
             if base_jid and base_jid != 0:
                 if n < 1:
@@ -1700,16 +1796,12 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
                     except Exception:
                         pass
         elif is_promoted:
-            # Promoted: only slot 3 matters
             new[3] = new_jid
         else:
-            # Unpromoted non-trainee: get promotion chain from lookup
             promos = base_promo_lookup.get(new_jid, [])
-            # Always fill from lookup first
             n = len(promos)
             for i in range(4):
                 new[3 + i] = promos[i] if i < n else 0
-            # Supplement unfilled promo slots using ClassData jidPromotion chain
             if n < 2 and jd.jidPromotion and jd.jidPromotion != 0:
                 if n < 1:
                     new[3] = jd.jidPromotion
@@ -1722,19 +1814,11 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
             for i in range(5, 7):
                 new[i] = 0
 
-        # (C) Tier-crossing: FE Builder's Palette Editor expects the
-        # character's own class JID in the slot matching their ORIGINAL
-        # tier (slot 1 for base, slot 3 for promoted).  The game makes no
-        # such distinction — it scans all 7 slots linearly — so this is a
-        # cosmetic adjustment.  When the original tier differs from the
-        # new class's tier, write the class JID into the ORIGINAL tier's
-        # primary slot and shift promos to the remaining slots.
+        # (C) Tier-crossing
         try:
             orig_jd = ClassData(rom, orig_jid)
             orig_promoted = bool(orig_jd.attributes & 0x100)
             if orig_promoted and new[3] != new_jid:
-                # Originally promoted: put the new class in slot 3
-                # and shift promos to slot 4+
                 promos_for_slot3 = new[3]
                 new[3] = new_jid
                 if promos_for_slot3 and promos_for_slot3 != 0:
@@ -1754,6 +1838,35 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
                 rom.data[entry_off + i] = new[i]
                 changes += 1
         count += changes
+
+    # (D) Borrow PaletteIndexTable entries for PIDs with all-zero entries
+    for pid in sorted(pid_set):
+        new_jid = CharacterData(rom, pid).jidDefault
+        if new_jid == 0:
+            continue
+
+        idx_off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if idx_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            continue
+        idx_entry = list(rom.data[idx_off:idx_off + PALETTE_ENTRY_SIZE])
+        if not all(b == 0 for b in idx_entry):
+            continue
+
+        donors = class_to_donors.get(new_jid, [])
+        if not donors:
+            continue
+
+        # Prefer player PIDs (1-34) over generic enemies for more natural colors
+        player_donors = [d for d in donors if d <= len(PLAYABLE_PLAYABLE_PIDS)]
+        donor_pid = player_donors[0] if player_donors else donors[0]
+
+        donor_idx_off = pal_idx_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE
+        donor_entry = rom.data[donor_idx_off:donor_idx_off + PALETTE_ENTRY_SIZE]
+
+        for i in range(PALETTE_ENTRY_SIZE):
+            if donor_entry[i] != idx_entry[i]:
+                rom.data[idx_off + i] = donor_entry[i]
+                count += 1
 
     return count
 
@@ -1955,9 +2068,9 @@ def _write_report(orig_data, rom, config, seed, output_path):
     lines.append('=== Event Item Changes ===')
     ev_changed = 0
     for offset, item_id in _scan_giveitem_events(rom):
-        if offset < len(orig_data):
-            orig_item = orig_data[offset + 2]
-            mod_item = data[offset + 2]
+        if offset + 16 <= len(orig_data):
+            orig_item = struct.unpack_from('<I', orig_data, offset + 12)[0]
+            mod_item = struct.unpack_from('<I', data, offset + 12)[0]
             if orig_item != mod_item:
                 gba_addr = ROM_BASE + offset
                 chapters = _find_chapters_for_gba_addr(rom, gba_addr)
@@ -2043,6 +2156,11 @@ def apply_config(rom_path, config, seed=None, output_path=None):
         ev_patched = randomize_event_items(rom, modified_pids)
         if ev_patched:
             print(f"Randomized {ev_patched} event-given item(s)")
+
+    loot_count = randomize_loot(rom, config)
+    if loot_count:
+        mode_label = config.get('loot_randomization', {}).get('mode', 'random')
+        print(f"Randomized {loot_count} loot event(s) ({mode_label} mode)")
 
     resolved_seed = seed if seed is not None else config.get('seed', None)
     _write_report(original_data, rom, config, resolved_seed, output_path)

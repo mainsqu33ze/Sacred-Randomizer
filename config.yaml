@@ -156,3 +156,7 @@ enemy_randomization:
       mean: null                         # mean for random mode
       stddev: 3                          # stddev for random mode
     max_weapon_ranks: true               # max all weapon types the class can use to S-rank
+
+loot_randomization:
+  enabled: true        # true = enable loot randomization
+  mode: random          # 'random' or 'shuffle'

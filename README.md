@@ -35,6 +35,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 | `weapon_effects` | Adds special effects (poison, nosferatu, etc.) |
 | `affinity_randomization` | Randomizes support affinities |
 | `promotion_items` | Unifies all promotion items as Master Seals |
+| `loot_randomization` | Randomizes items from chests, events, and side objectives |
 | `enemy_randomization` | Randomizes generic enemy classes & loadouts on maps |
 
 ### class_randomization
@@ -54,7 +55,7 @@ class_randomization:
 
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
 
-`palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Set to `false` to disable (characters will use generic class palettes).
+`palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
 ### growth_randomization
 
@@ -230,6 +231,22 @@ promotion_items:
 
 When enabled, every promotion item (Heaven Seal, Ocean Seal, etc.) behaves like a Master Seal — any unpromoted class can use it and the game's internal class-eligibility tables are patched. Disable `replace_distribution` to keep the original promo item types in chests and drops.
 
+### loot_randomization
+
+Randomizes items from chests, house visits, story events, and side objectives:
+
+```yaml
+loot_randomization:
+  enabled: false        # true = enable loot randomization
+  mode: random          # 'random' or 'shuffle'
+```
+
+**Modes:**
+- `random`: each loot item is replaced with a random eligible item from the full item pool (weapons, items, stat boosters, keys, etc.). Monster-only items and story-exclusive items are excluded.
+- `shuffle`: all loot item IDs across all chapters are collected, permuted, and redistributed — the same pool of items appears, just in different locations.
+
+Scans each chapter's event data for `GiveItem` (`0x1E`) commands, which covers villages, houses, story events, and recruitment rewards.
+
 ### enemy_randomization
 
 Randomizes generic enemy classes and loadouts per map:
@@ -347,6 +364,10 @@ promotion_items:
   enabled: true
   master_seal_universal: true
   replace_distribution: true
+
+loot_randomization:
+  enabled: false
+  mode: random
 
 enemy_randomization:
   enabled: true
