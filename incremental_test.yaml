@@ -8,6 +8,7 @@ class_randomization:
   mode: shuffle
   manakete_count: 1
   include_soldier: true
+  palette_mapping: true
 
 growth_randomization:
   character: random

@@ -422,6 +422,13 @@ MONSTER_BLOCKED_ITEM_IDS = {
     0xB5,  # Stone / Monster Stone
 }
 
+# Palette mapping tables
+# FE8 uses two character-indexed tables (7 bytes each, indexed by PID-1)
+# to associate characters with their custom color palettes per class tier.
+PALETTE_CLASS_TABLE_PTR_OFF = 0x575B4  # ROM offset of pointer to palette class table
+PALETTE_INDEX_TABLE_PTR_OFF = 0x57394  # ROM offset of pointer to palette index table
+PALETTE_ENTRY_SIZE = 7
+
 class ItemData:
     def __init__(self, rom, item_id):
         offset = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE

@@ -6,6 +6,7 @@ class_randomization:
   manakete_count: 1
   omit_classes: []
   include_soldier: false
+  palette_mapping: true
 
 growth_randomization:
   character: shuffle

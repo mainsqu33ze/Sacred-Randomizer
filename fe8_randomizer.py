@@ -45,6 +45,8 @@ Examples:
         print("  omit_classes: []")
         print("  # Soldier has no promotion; excluded from player pools by default")
         print("  include_soldier: false")
+        print("  # Auto-update palette class table so characters keep custom palettes")
+        print("  palette_mapping: true")
         print("")
         print("# --- Growth Rates ---")
         print("# Randomizes how fast characters grow in each stat as they level up.")

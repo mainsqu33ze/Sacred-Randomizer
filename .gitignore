@@ -18,3 +18,7 @@ test_verbose.txt
 test_boss.txt
 test_boss2.txt
 test_final.txt
+test_branch.txt
+scripts/_dump_cls.py
+test_config.yaml
+test_hybrid.txt

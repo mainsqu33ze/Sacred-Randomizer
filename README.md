@@ -44,6 +44,7 @@ class_randomization:
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
+  palette_mapping: true  # Auto-update palette class table for custom palettes
 ```
 
 `mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
@@ -51,6 +52,8 @@ class_randomization:
 `manakete_count` overwrites the mode logic for that many characters, giving them `JID.MANAKETE_MYRRH` with Dragonstone+Vulneraries.
 
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
+
+`palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Set to `false` to disable (characters will use generic class palettes).
 
 ### growth_randomization
 
@@ -269,6 +272,7 @@ class_randomization:
   manakete_count: 1
   omit_classes: []
   include_soldier: false
+  palette_mapping: true
 
 growth_randomization:
   character: false

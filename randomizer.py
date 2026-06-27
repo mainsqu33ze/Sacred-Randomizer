@@ -1466,6 +1466,232 @@ def randomize_enemies(rom, config):
     return total
 
 
+def _build_base_promo_lookup(rom):
+    """Build class -> list of promotion JIDs from ALL PaletteClassTable entries.
+
+    Scans slots 1-2 (base / alternative base) in every entry and correctly
+    associates promotions:
+      * Class in slot 1 → promos from slots 3-4 (primary branch), plus
+        slots 5-6 when slot 2 is empty (no secondary base).
+      * Class in slot 2 → promos from slots 5-6 (secondary branch).
+    This captures branched-promotion data from trainee entries (e.g. the
+    Journeyman_M alternative in slot 2 of Amelia's Recruit entry).
+    """
+    import struct
+    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
+    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_cls_off = pal_cls_gba - ROM_BASE
+
+    lookup = {}
+    for pid in range(1, 256):
+        entry_off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if entry_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        slots = list(rom.data[entry_off:entry_off + PALETTE_ENTRY_SIZE])
+        s1, s2 = slots[1], slots[2]
+        p34 = [j for j in slots[3:5] if j and j != 0]
+        p56 = [j for j in slots[5:7] if j and j != 0]
+
+        # Class at slot 1 (primary base) → slots 3-4 are its promos
+        if s1 and s1 != 0:
+            if p34:
+                lookup.setdefault(s1, []).append(p34)
+            # If slot 2 is empty, slots 5-6 also belong to slot 1
+            if not s2 and p56:
+                lookup.setdefault(s1, []).append(p34 + p56 if p34 else p56)
+
+        # Class at slot 2 (secondary base) → slots 5-6 are its promos
+        if s2 and s2 != 0 and p56:
+            lookup.setdefault(s2, []).append(p56)
+
+    result = {}
+    for base, promo_lists in lookup.items():
+        if len(promo_lists) == 1:
+            result[base] = promo_lists[0]
+        else:
+            # Take the longest list (most complete promo data)
+            result[base] = max(promo_lists, key=len)
+    return result
+
+
+def _build_trainee_chain_lookup(rom):
+    """Build trainee_class -> full chain [base, promo, ...] from trainee PaletteClassTable entries."""
+    import struct
+    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
+    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_cls_off = pal_cls_gba - ROM_BASE
+
+    lookup = {}
+    for pid in range(1, 256):
+        entry_off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if entry_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        slots = list(rom.data[entry_off:entry_off + PALETTE_ENTRY_SIZE])
+        trainee = slots[0]
+        if trainee and trainee != 0:
+            chain = [j for j in slots[1:7] if j and j != 0]
+            if chain:
+                lookup.setdefault(trainee, []).append(chain)
+    result = {}
+    for trainee, chain_lists in lookup.items():
+        result[trainee] = max(chain_lists, key=lambda cl: chain_lists.count(cl))
+    return result
+
+
+def randomize_palette_mappings(rom, pid_set, original_jids):
+    """Update palette class table so randomized characters keep their custom palettes.
+
+    Hybrid approach:
+      (A) Find-and-replace the character's ORIGINAL class JID with their NEW
+          class JID in all 7 slots of their PaletteClassTable entry.  This
+          preserves any existing branched-promotion structure inherited from
+          the old class.
+      (B) For the promotion slots (3-6 for base classes, 0-6 for trainees),
+          use a global lookup built from the ORIGINAL PaletteClassTable to
+          fill in promotions appropriate for the NEW class.
+      (C) The PaletteIndexTable (palette IDs) is left untouched — the
+          character keeps their palette colours.
+
+    Returns the number of byte changes made.
+    """
+    if not pid_set:
+        return 0
+
+    import struct
+    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
+
+    pal_class_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_class_off = pal_class_gba - ROM_BASE
+
+    base_promo_lookup = _build_base_promo_lookup(rom)
+    trainee_lookup = _build_trainee_chain_lookup(rom)
+
+    count = 0
+    for pid in sorted(pid_set):
+        new_jid = CharacterData(rom, pid).jidDefault
+        if new_jid == 0:
+            continue
+        orig_jid = original_jids.get(pid, 0)
+        if orig_jid == 0:
+            continue
+
+        entry_off = pal_class_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if entry_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            continue
+
+        orig = list(rom.data[entry_off:entry_off + PALETTE_ENTRY_SIZE])
+        new = list(orig)
+
+        # (A) Find-and-replace the character's own class JID in all slots
+        replaced_own = False
+        for i in range(7):
+            if new[i] == orig_jid:
+                new[i] = new_jid
+                replaced_own = True
+        # Fallback: if orig_jid wasn't found, write new_jid into the
+        # appropriate slot based on the NEW class's tier
+        jd = ClassData(rom, new_jid)
+        if not replaced_own:
+            if new_jid in TRAINEE_JIDS:
+                new[0] = new_jid
+            elif jd.attributes & 0x100:
+                new[3] = new_jid
+            else:
+                new[1] = new_jid
+
+        # (B) Remap promotion chain for the new class
+        is_promoted = bool(jd.attributes & 0x100)
+
+        if new_jid in TRAINEE_JIDS:
+            # Trainee: replace entire entry with new trainee chain
+            chain = trainee_lookup.get(new_jid, [])
+            n = len(chain)
+            new[0] = new_jid
+            for i in range(1, 7):
+                new[i] = chain[i - 1] if i - 1 < n else 0
+            # Supplement unfilled via ClassData chain
+            base_jid = jd.jidPromotion
+            if base_jid and base_jid != 0:
+                if n < 1:
+                    new[1] = base_jid
+                if n < 2:
+                    try:
+                        base_jd = ClassData(rom, base_jid)
+                        if base_jd.jidPromotion and base_jd.jidPromotion != 0:
+                            new[3] = base_jd.jidPromotion
+                    except Exception:
+                        pass
+                if n < 3:
+                    try:
+                        base_jd = ClassData(rom, base_jid)
+                        if base_jd.jidPromotion and base_jd.jidPromotion != 0:
+                            try:
+                                p2 = ClassData(rom, base_jd.jidPromotion)
+                                if p2.jidPromotion and p2.jidPromotion != 0:
+                                    new[4] = p2.jidPromotion
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+        elif is_promoted:
+            # Promoted: only slot 3 matters
+            new[3] = new_jid
+        else:
+            # Unpromoted non-trainee: get promotion chain from lookup
+            promos = base_promo_lookup.get(new_jid, [])
+            # Always fill from lookup first
+            n = len(promos)
+            for i in range(4):
+                new[3 + i] = promos[i] if i < n else 0
+            # Supplement unfilled promo slots using ClassData jidPromotion chain
+            if n < 2 and jd.jidPromotion and jd.jidPromotion != 0:
+                if n < 1:
+                    new[3] = jd.jidPromotion
+                try:
+                    jd2 = ClassData(rom, jd.jidPromotion)
+                    if jd2.jidPromotion and jd2.jidPromotion != 0:
+                        new[4] = jd2.jidPromotion
+                except Exception:
+                    pass
+            for i in range(5, 7):
+                new[i] = 0
+
+        # (C) Tier-crossing: FE Builder's Palette Editor expects the
+        # character's own class JID in the slot matching their ORIGINAL
+        # tier (slot 1 for base, slot 3 for promoted).  The game makes no
+        # such distinction — it scans all 7 slots linearly — so this is a
+        # cosmetic adjustment.  When the original tier differs from the
+        # new class's tier, write the class JID into the ORIGINAL tier's
+        # primary slot and shift promos to the remaining slots.
+        try:
+            orig_jd = ClassData(rom, orig_jid)
+            orig_promoted = bool(orig_jd.attributes & 0x100)
+            if orig_promoted and new[3] != new_jid:
+                # Originally promoted: put the new class in slot 3
+                # and shift promos to slot 4+
+                promos_for_slot3 = new[3]
+                new[3] = new_jid
+                if promos_for_slot3 and promos_for_slot3 != 0:
+                    for i in range(4, 7):
+                        if new[i] == new_jid:
+                            new[i] = 0
+                    for i in range(4, 7):
+                        if new[i] == 0:
+                            new[i] = promos_for_slot3
+                            break
+        except Exception:
+            pass
+
+        changes = 0
+        for i in range(7):
+            if new[i] != orig[i]:
+                rom.data[entry_off + i] = new[i]
+                changes += 1
+        count += changes
+
+    return count
+
+
 def _build_ud_to_chapters(rom):
     """Build mapping: UD array file offset -> list of chapter names."""
     data = rom.data
@@ -1695,6 +1921,9 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     # Snapshot original data for report generation
     original_data = bytearray(rom.data)
 
+    # Snapshot original class JIDs before any randomization (used by palette mapping)
+    original_jids = {pid: CharacterData(rom, pid).jidDefault for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
+
     modified_pids = randomize_class(rom, config)
     randomize_growths(rom, config)
     randomize_base_stats(rom, config)
@@ -1711,6 +1940,26 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     enemy_patched = randomize_enemies(rom, config)
     if enemy_patched:
         print(f"Randomized {enemy_patched} generic enemy unit(s)")
+
+    # Update palette class table so characters keep custom palettes after class changes
+    class_rules = config.get('class_randomization', {})
+    palette_enabled = class_rules.get('palette_mapping', True)
+    if palette_enabled:
+        palette_pids = set(modified_pids)
+        enemy_rules = config.get('enemy_randomization', {})
+        include_bosses = enemy_rules.get('include_bosses', False)
+        if enemy_rules.get('enabled', False):
+            for pid in range(35, 256):
+                if pid == FINAL_BOSS_PID:
+                    continue
+                if not include_bosses and pid in BOSS_PIDS:
+                    continue
+                palette_pids.add(pid)
+        elif include_bosses:
+            palette_pids |= BOSS_PIDS
+        pal_count = randomize_palette_mappings(rom, palette_pids, original_jids)
+        if pal_count:
+            print(f"Updated palette mappings for {pal_count} unit(s)")
 
     item_rules = config.get('item_randomization', {})
     mode = item_rules.get('mode', 'random')
