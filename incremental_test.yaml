@@ -7,6 +7,7 @@ seed: 42
 class_randomization:
   mode: shuffle
   manakete_count: 1
+  include_soldier: true
 
 growth_randomization:
   character: random
@@ -39,3 +40,9 @@ enemy_randomization:
   randomize_classes: true
   randomize_items: true
   include_bosses: true
+  boss_buffs:
+    growths:
+      mode: 1.3
+    base_stats:
+      mode: 1.3
+    max_weapon_ranks: true

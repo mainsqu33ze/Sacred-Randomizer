@@ -43,11 +43,14 @@ class_randomization:
   mode: shuffle          # 'shuffle' (permute, no repeats) or 'random' (sample with repeats)
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
+  include_soldier: false # Soldier has no promotion; excluded from player pools by default
 ```
 
 `mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
 
 `manakete_count` overwrites the mode logic for that many characters, giving them `JID.MANAKETE_MYRRH` with Dragonstone+Vulneraries.
+
+Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
 
 ### growth_randomization
 
@@ -230,6 +233,18 @@ enemy_randomization:
   include_bosses: false              # true = include bosses (PIDs 0x40–0x63, etc.)
   weapon_upgrade_chance: 25          # % chance per unit to get a weapon tier upgrade
   omit_classes: []                   # JID names to exclude, e.g. [SHAMAN]
+  boss_buffs:                        # extra buffs when include_bosses: true
+    growths:
+      mode: false                    # false | <number> | random_buff | random
+      buff_range: 0.3                # ±range for random_buff mode
+      mean: null
+      stddev: 10
+    base_stats:
+      mode: false                    # false | <number> | random_buff | random
+      buff_range: 0.3
+      mean: null
+      stddev: 3
+    max_weapon_ranks: true           # S-rank for all usable weapon types
 ```
 
 Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain.
@@ -239,6 +254,8 @@ Classes are grouped by **movement category** (flyer / water / mountain / foot) s
 - Final boss (PID 0xBE) is always excluded regardless of `include_bosses`.
 - Lords and trainees are excluded.
 - Set `include_monsters: true` to allow monster classes in the pool. Set `randomize_monster_classes: true` to also randomize enemies that start as monsters.
+
+**Boss buffs** apply when `include_bosses: true` and a boss PID is in scope. Growth and base stats can be scaled by a multiplier (`1.5`), randomly buffed per-stat (`random_buff`), or fully rerolled with gaussian (`random`). `max_weapon_ranks: true` sets weapon experience to 251 (S-rank) for every weapon type the boss's class can use, and zeroes out weapon types the class can't use — so the boss only keeps ranks relevant to their randomized class.
 
 ## Full reference config
 
@@ -251,6 +268,7 @@ class_randomization:
   mode: shuffle
   manakete_count: 1
   omit_classes: []
+  include_soldier: false
 
 growth_randomization:
   character: false
@@ -327,4 +345,16 @@ enemy_randomization:
   include_bosses: false
   weapon_upgrade_chance: 25
   omit_classes: []
+  boss_buffs:
+    growths:
+      mode: false
+      buff_range: 0.3
+      mean: null
+      stddev: 10
+    base_stats:
+      mode: false
+      buff_range: 0.3
+      mean: null
+      stddev: 3
+    max_weapon_ranks: true
 ```

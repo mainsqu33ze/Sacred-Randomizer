@@ -19,6 +19,7 @@ class_randomization:
   mode: random              # 'shuffle' (permute, no repeats) or 'random' (sample with replacement, repeats allowed)
   manakete_count: 1          # max characters that become Manakete (0 = none)
   omit_classes: []           # List of JID enum names to exclude, e.g. [NECROMANCER] (case-insensitive)
+  include_soldier: false     # Soldier has no promotion path; excluded from player pools by default
 
 # ---------------------------------------------------------------------------
 # GROWTH RATES
@@ -37,7 +38,7 @@ growth_randomization:
   class: random                # Per-class growth rates (mostly impacts generic enemies)
   class_buff_range: 0.5        # +/- range for 'random_buff' mode (e.g. 0.3 = ±30%)
   min: 0                       # Minimum clamp for all growth modes
-  max: 100                     # Maximum clamp for all growth modes
+  max: 255                     # Maximum clamp for all growth modes
   mean: null                   # Mean for 'random' normal distribution (null = use original value)
   stddev: 10                   # Standard deviation for 'random' normal distribution
   pool_total: 315              # Total growth pool for 'pool' mode (null = preserve original total)
@@ -139,6 +140,18 @@ enemy_randomization:
   randomize_items: true                  # true = assign weapons compatible with their new class
   randomize_monster_classes: false       # true = randomize monster enemies into other classes
   include_monsters: false                # true = allow enemies to randomize into monster classes
-  include_bosses: false                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
+  include_bosses: true                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
   weapon_upgrade_chance: 25              # percent chance (0-100) a unit's weapon tier is improved
   omit_classes: []                       # List of JID enum names to exclude, e.g. [SHAMAN, MERCENARY]
+  boss_buffs:                            # Applied only when include_bosses: true
+    growths:
+      mode: random_buff                        # false | <number> | random_buff | random
+      buff_range: 0.3                    # ±range for random_buff mode
+      mean: null                         # mean for random mode
+      stddev: 10                         # stddev for random mode
+    base_stats:
+      mode: 1.5                        # false | <number> | random_buff | random
+      buff_range: 0.3                    # ±range for random_buff mode
+      mean: null                         # mean for random mode
+      stddev: 3                          # stddev for random mode
+    max_weapon_ranks: true               # max all weapon types the class can use to S-rank

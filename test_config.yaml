@@ -5,6 +5,7 @@ class_randomization:
   mode: shuffle
   manakete_count: 1
   omit_classes: []
+  include_soldier: false
 
 growth_randomization:
   character: shuffle
@@ -81,3 +82,15 @@ enemy_randomization:
   include_bosses: false
   weapon_upgrade_chance: 25
   omit_classes: []
+  boss_buffs:
+    growths:
+      mode: false
+      buff_range: 0.3
+      mean: null
+      stddev: 10
+    base_stats:
+      mode: false
+      buff_range: 0.3
+      mean: null
+      stddev: 3
+    max_weapon_ranks: true

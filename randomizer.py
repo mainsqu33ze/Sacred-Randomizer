@@ -165,6 +165,7 @@ def randomize_class(rom, config):
         mode = 'none'
         manakete_count = 0
     omit_jids = _parse_omit_classes(config)
+    include_soldier = rules.get('include_soldier', False)
 
     modified_pids = set()
 
@@ -184,6 +185,10 @@ def randomize_class(rom, config):
 
     promoted_jids -= omit_jids
     unpromoted_jids -= omit_jids
+    if not include_soldier:
+        unpromoted_jids.discard(JID.SOLDIER)
+    # Soldier has no promotion path in vanilla, so also remove from promoted if somehow present
+    promoted_jids.discard(JID.SOLDIER)
 
     if mode == 'shuffle':
         # Permute classes within each tier (no replacement)
@@ -1291,6 +1296,74 @@ def randomize_enemies(rom, config):
             if new_jid != orig_jid:
                 rom.data[cd.offset + 5] = new_jid
                 total += 1
+
+    # Boss buffs: apply growth/stat/weapon-rank buffs to boss PIDs
+    boss_buffs_rules = rules.get('boss_buffs', {})
+    boss_growth_mode = boss_buffs_rules.get('growths', {}).get('mode', False)
+    boss_stat_mode = boss_buffs_rules.get('base_stats', {}).get('mode', False)
+    boss_max_ranks = boss_buffs_rules.get('max_weapon_ranks', True)
+    boss_pids_in_scope = [p for p in pid_range if p in BOSS_PIDS]
+    if boss_pids_in_scope and (boss_growth_mode or boss_stat_mode or boss_max_ranks):
+        S_RANK_WEXP = 251
+        buff_growths = boss_buffs_rules.get('growths', {})
+        buff_stats = boss_buffs_rules.get('base_stats', {})
+        for pid in boss_pids_in_scope:
+            cd = CharacterData(rom, pid)
+
+            # Growth rate buff
+            if boss_growth_mode:
+                grow = [cd.growthHP, cd.growthPow, cd.growthSkl,
+                        cd.growthSpd, cd.growthDef, cd.growthRes,
+                        cd.growthLck]
+                if isinstance(boss_growth_mode, (int, float)):
+                    grow = [_scale_stat(g, float(boss_growth_mode), 0, 100) for g in grow]
+                elif boss_growth_mode == 'random_buff':
+                    br = buff_growths.get('buff_range', 0.3)
+                    grow = [_scale_stat(g, 1.0 + random.uniform(-br, br), 0, 100) for g in grow]
+                elif boss_growth_mode == 'random':
+                    m = buff_growths.get('mean', None)
+                    s = buff_growths.get('stddev', 10)
+                    grow = [_randomize_stat(g, m, s, 0, 100) for g in grow]
+                (cd.growthHP, cd.growthPow, cd.growthSkl,
+                 cd.growthSpd, cd.growthDef, cd.growthRes,
+                 cd.growthLck) = grow
+
+            # Base stat buff
+            if boss_stat_mode:
+                caps = [30, 25, 25, 25, 25, 25, 30]
+                stats = [cd.baseHP, cd.basePow, cd.baseSkl, cd.baseSpd,
+                         cd.baseDef, cd.baseRes, cd.baseLck]
+                if isinstance(boss_stat_mode, (int, float)):
+                    stats = [_scale_stat(s, float(boss_stat_mode), 0, cap) for s, cap in zip(stats, caps)]
+                elif boss_stat_mode == 'random_buff':
+                    br = buff_stats.get('buff_range', 0.3)
+                    offsets = [random.uniform(-br, br) for _ in range(7)]
+                    stats = [_scale_stat(s, 1.0 + off, 0, cap) for s, off, cap in zip(stats, offsets, caps)]
+                elif boss_stat_mode == 'random':
+                    m = buff_stats.get('mean', None)
+                    s = buff_stats.get('stddev', 3)
+                    stats = [_randomize_stat(sv, m, s, 0, cap) for sv, cap in zip(stats, caps)]
+                (cd.baseHP, cd.basePow, cd.baseSkl, cd.baseSpd,
+                 cd.baseDef, cd.baseRes, cd.baseLck) = stats
+
+            # Max weapon ranks: S-rank for types new class can use, zero for others
+            if boss_max_ranks:
+                jd = ClassData(rom, cd.jidDefault)
+                new_ranks = list(cd.baseWexp)
+                changed = False
+                for i in range(8):
+                    if jd.baseWexp[i] > 0:
+                        if new_ranks[i] < S_RANK_WEXP:
+                            new_ranks[i] = S_RANK_WEXP
+                            changed = True
+                    else:
+                        if new_ranks[i] != 0:
+                            new_ranks[i] = 0
+                            changed = True
+                if changed:
+                    cd.baseWexp = new_ranks
+
+            cd.write(rom)
 
     # Phase B + C: UD array class overrides and items
     if rand_classes or rand_items:
