@@ -25,7 +25,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 ### Features at a glance
 
 | Section | What it does |
-|---|---|---|
+| --- | --- |
 | `class_randomization` | Shuffles classes among playable characters |
 | `growth_randomization` | Randomizes stat growth rates (character & class) |
 | `base_stat_randomization` | Randomizes or swaps base stats |
@@ -37,6 +37,15 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 | `promotion_items` | Unifies all promotion items as Master Seals |
 | `loot_randomization` | Randomizes items from chests, events, and side objectives |
 | `enemy_randomization` | Randomizes generic enemy classes & loadouts on maps |
+
+
+### Default Settings Quick-Reference
+When running the randomizer with an untouched `config.yaml`, the default profile provides a **fun, balanced gameplay experience** with the following baseline behavior:
+
+* **Playable Characters:** Classes are shuffled (unpromoted to unpromoted, promoted to promoted) without duplication. Custom colors/palettes are intelligently mapped to their new classes. A single unit is guaranteed to become a Manakete.
+* **Map Enemies:** Generic enemy classes and inventories are randomized. Their classes respect original map placement boundaries (e.g., flying units replace flying units) so they don't get trapped on mountains or oceans. Bosses are left vanilla.
+* **Items & Mechanics:** Inventories auto-adjust so randomized units always spawn with weapons they can actually wield. All promotion items are universally mapped to function as **Master Seals** for ease of progression.
+* **Stats & Growths:** Character growths, base stats, weapon values, and item/chest loot locations remain identical to vanilla rules.
 
 ### class_randomization
 
