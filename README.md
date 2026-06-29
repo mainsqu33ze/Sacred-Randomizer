@@ -18,6 +18,23 @@ python fe8_randomizer.py ROM.GBA --dump > ref.yaml  # print all defaults
 
 Without `-o`, output goes to `ROM_randomized.gba`.
 
+## GUI
+
+A Tkinter GUI is also available for point-and-click configuration:
+
+```
+python gui.py
+```
+
+The GUI covers most common options across tabbed panels, but has a few **limitations** compared to using a `config.yaml` directly:
+
+- Exposes fewer knobs — no `mean` field for growth/stat gaussians, no number/scaling mode for class growths, weapon stat mode is on/off only (no multiplier).
+- Cannot produce a `--dump` of the default config.
+- Seed cannot be overridden via CLI flag (set it inside the window).
+- Requires a display (Tkinter, not headless-friendly).
+
+For full control, use the CLI with a `config.yaml`.
+
 ## Configuration
 
 All features are controlled by `config.yaml`. Every option has sensible defaults — start with the provided `config.yaml` and tweak what you like.
@@ -159,6 +176,8 @@ item_randomization:
 - **`mode: random`**: picks a random usable weapon for each slot. Existing weapons are kept only if the class+rank supports them.
 - **`mode: shuffle`**: permutes all weapons across unit definitions without changing the pool.
 - Manaketes always get `[Dragonstone, Vulnerary, Vulnerary, empty]`.
+
+**Weapon rank transfer:** When a character's class changes, weapon ranks are adjusted to match the new class. Ranks for weapon types the new class can't use are zeroed out. For supported types, the character keeps whichever is higher — their existing rank or the class's base. Additionally, if the character had their highest rank in a type they can no longer use, that rank is transferred to their weakest supported type, so Eirika's S-rank swords aren't wasted when she becomes a Mage.
 
 ### weapon_randomization
 
