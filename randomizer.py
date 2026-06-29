@@ -139,13 +139,28 @@ MANAKETE_JIDS = {JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH}
 
 
 def _adjust_weapon_ranks(cd, new_jid, rom):
-    """Zero weapon ranks for types the new class can't use; use class base as floor."""
+    """Zero weapon ranks for types the new class can't use; use class base as floor.
+    Transfers the character's highest lost weapon rank to an available type."""
     jd = ClassData(rom, new_jid)
+    supported = [i for i in range(8) if jd.baseWexp[i] > 0]
+
+    max_rank = max(cd.baseWexp)
+    highest_lost = 0
+    for i in range(8):
+        if cd.baseWexp[i] == max_rank and jd.baseWexp[i] == 0 and max_rank > 0:
+            highest_lost = max_rank
+            break
+
     for i in range(8):
         if jd.baseWexp[i] > 0:
             cd.baseWexp[i] = max(cd.baseWexp[i], jd.baseWexp[i])
         else:
             cd.baseWexp[i] = 0
+
+    if highest_lost > 0 and supported:
+        target = min(supported, key=lambda i: cd.baseWexp[i])
+        if cd.baseWexp[target] < highest_lost:
+            cd.baseWexp[target] = highest_lost
 
 
 def _split_class_pool(rom):
