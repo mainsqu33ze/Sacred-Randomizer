@@ -38,7 +38,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.include_soldier = tk.BooleanVar(value=False)
         self.palette_mapping = tk.BooleanVar(value=True)
         self.affinity_randomization = tk.BooleanVar(value=False)
-        self.class_omit = tk.StringVar()
+        self.class_omit = tk.StringVar(value="BARD")
 
         # Growth Settings
         self.growth_char = tk.StringVar(value="false")
@@ -47,6 +47,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.growth_min = tk.IntVar(value=0)
         self.growth_max = tk.IntVar(value=100)
         self.growth_stddev = tk.IntVar(value=10)
+        self.growth_pool_total = tk.IntVar(value=0)
 
         # Base Stat Settings
         self.base_char = tk.StringVar(value="false")
@@ -187,27 +188,24 @@ class FE8RandomizerGUI(tk.Tk):
         tab = self._scrollable_tab("Stats & Growths")
 
         # Growths -------------------------------------------------------
-        g = ttk.LabelFrame(tab, text=" Growth Rates ", padding=10)
+        g = ttk.LabelFrame(tab, text=" Player Character Growths ", padding=10)
         g.pack(fill=tk.X, pady=4)
 
-        ttk.Label(g, text="Player character mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(g, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
         ttk.Combobox(g, textvariable=self.growth_char, values=["false", "shuffle", "random", "pool"], state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(g, text="Class (enemy) mode:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Combobox(g, textvariable=self.growth_class, values=["false", "shuffle", "random", "random_buff", "pool"], state="readonly").grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="Stddev:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(g, text="Stddev (gaussian spread):").grid(row=2, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(g, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=2, column=1, padx=6, sticky=tk.W)
-
-        ttk.Label(g, text="Clamp min / max:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Label(g, text="Clamp min / max:").grid(row=2, column=0, sticky=tk.W, pady=2)
         sf = ttk.Frame(g)
-        sf.grid(row=3, column=1, sticky=tk.W, padx=6)
+        sf.grid(row=2, column=1, sticky=tk.W, padx=6)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_min, width=5).pack(side=tk.LEFT)
         ttk.Label(sf, text="/").pack(side=tk.LEFT, padx=4)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_max, width=5).pack(side=tk.LEFT)
 
-        ttk.Label(g, text="Class buff range (+/-):").grid(row=4, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(g, from_=0.0, to=1.0, increment=0.1, textvariable=self.growth_buff_range, width=6).grid(row=4, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="Pool total (0 = auto):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
 
         # Base Stats ----------------------------------------------------
         b = ttk.LabelFrame(tab, text=" Base Stats ", padding=10)
@@ -327,6 +325,29 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(card, text="Omit classes (comma-sep JID names):").grid(row=7, column=0, sticky=tk.W, pady=4)
         ttk.Entry(card, textvariable=self.enemy_omit, width=30).grid(row=7, column=1, sticky=tk.W, padx=6)
 
+        # Class Growths -------------------------------------------------
+        cg = ttk.LabelFrame(tab, text=" Enemy Class Growth Rates ", padding=10)
+        cg.pack(fill=tk.X, pady=4)
+
+        ttk.Label(cg, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(cg, textvariable=self.growth_class, values=["false", "shuffle", "random", "random_buff", "pool"], state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(cg, text="Stddev:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(cg, text="Clamp min / max:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        sf = ttk.Frame(cg)
+        sf.grid(row=2, column=1, sticky=tk.W, padx=6)
+        ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_min, width=5).pack(side=tk.LEFT)
+        ttk.Label(sf, text="/").pack(side=tk.LEFT, padx=4)
+        ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_max, width=5).pack(side=tk.LEFT)
+
+        ttk.Label(cg, text="Buff range (+/-):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=0.0, to=1.0, increment=0.1, textvariable=self.growth_buff_range, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(cg, text="Pool total (0 = auto):").grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=4, column=1, padx=6, sticky=tk.W)
+
         # Boss Buffs ----------------------------------------------------
         bb = ttk.LabelFrame(tab, text=" Boss Buffs (when included) ", padding=10)
         bb.pack(fill=tk.X, pady=8)
@@ -379,7 +400,7 @@ class FE8RandomizerGUI(tk.Tk):
                 "max": self.growth_max.get(),
                 "mean": None,
                 "stddev": self.growth_stddev.get(),
-                "pool_total": None,
+                "pool_total": self.growth_pool_total.get() if self.growth_pool_total.get() > 0 else None,
             },
             "base_stat_randomization": {
                 "character": _mode(self.base_char.get(), ["shuffle", "random"]),
@@ -520,6 +541,7 @@ class FE8RandomizerGUI(tk.Tk):
             self.growth_min.set(g.get("min", 0))
             self.growth_max.set(g.get("max", 100))
             self.growth_stddev.set(g.get("stddev", 10))
+            self.growth_pool_total.set(g.get("pool_total", 0) or 0)
 
             b = d.get("base_stat_randomization", {})
             self.base_char.set(_str(b.get("character")))
