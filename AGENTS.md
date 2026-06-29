@@ -7,10 +7,11 @@ python fe8_randomizer.py ROM.GBA -c config.yaml -o output.gba
 python fe8_randomizer.py ROM.GBA --dump          # prints default config to stdout
 python fe8_randomizer.py ROM.GBA --seed 42        # overrides config seed
 ```
-Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--seed`. `save()` calls `fix_checksum()` automatically. No test suite — verify manually with test ROM.
+Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--seed`. `save()` calls `fix_checksum()` automatically. No test suite — verify manually or run test configs: `incremental_test.yaml` (all features) or `test_config.yaml` (dev baseline).
 
 ## Entrypoints & structure
 - `fe8_randomizer.py` — CLI entrypoint (argparse)
+- `gui.py` — Tkinter GUI (standalone, `python gui.py`; unused by CLI path)
 - `randomizer.py` — `apply_config()` orchestrates in order: class → growths → base stats → **promo gain sync** → affinity → weapon stats → weapon effects → promotion items → unit defs → enemy randomize → **palette mapping** → unit items → loot
 - `fe8rom.py` — ROM binary parsing: `ROM`, `CharacterData`, `ClassData`, `ItemData`, `ChapterData`, enums (`PID`, `JID`), `build_weapon_pools()`
 - `scripts/_check_*` / `_find_*` / `_dump_*` — standalone dev diagnostics, not part of randomizer
@@ -38,13 +39,12 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
   - `'random_buff'`: each growth multiplied by `1.0 ± random(0, class_buff_range)`, clamped to `min`/`max`.
   - `'random'`: gaussian with optional `mean`/`stddev` (same as character mode).
   - `'shuffle'`: permutes the 7 growth values within each class.
-  - `'pool'`: distributes `pool_total` across 7 stats.
-- **Growth pool** (`_distribute_growth_pool`): 7 random weights normalized to `pool_total`, clamped to min/max.
+  - `'pool'`: distributes `pool_total` across 7 stats (7 random weights normalized to total, clamped).
 - **Item mode**: `mode: random` (default) picks random weapons from pools for invalid class-weapon combos. `mode: shuffle` permutes all items across UD arrays.
 - **Event items**: GiveItem (`0x1E`) in chapter data range (`0x088B0000-0x088CFFFF`). Non-weapons, monster-blocked, story-exclusive preserved. Does NOT run in shuffle mode.
-- **Loot randomization** (`loot_randomization`): config section with `enabled: false` and `mode: random | shuffle`. Scans each chapter's event data for GiveItem (`0x1E`) commands via `_scan_loot_events()`. Two validity checks reject false positives: (1) `data[pos+3] < 0x80` (plausible event opcode vs compressed data), (2) rejects u16 item-table padding where `data[pos-1]`, `data[pos+1]`, and `data[pos+3]` are all `0x00`. `mode: random` replaces each loot item with a random eligible item (excludes monster-blocked, story-exclusive, dummy items); `mode: shuffle` permutes all loot item IDs across all chapters. Runs near the end of `apply_config()`, after promotion item conversion.
+- **Loot randomization** (`loot_randomization`): `mode: random | shuffle`. Scans GiveItem (`0x1E`) commands per chapter via `_scan_loot_events()`. Two false-positive filters: `data[pos+3] < 0x80`, and rejects u16 padding where `data[pos-1]`, `data[pos+1]`, `data[pos+3]` are all `0x00`. Runs after promotion item conversion.
 - **Boss buffs** (`boss_buffs`): sub-section of `enemy_randomization` active when `include_bosses: true`. `growths.mode` / `base_stats.mode` support `<number>` (scale), `random_buff` (per-stat random factor), or `random` (gaussian). `max_weapon_ranks: true` sets Wexp=251 (S-rank) for all weapon types the boss's class can use, and zeroes out types the class can't use. Applied between Phase A and Phase B, on CharacterData only.
-- **Enemy randomization** (`randomize_enemies`): operates on generic enemies (PID 35–255). **Class randomization** changes both `CharacterData.jidDefault` (Phase A) and UD entry class bytes (Phase B) for non-playable PIDs. Groups classes by movement category via `_move_group_key()`: flyer (0x0880BB96), water (0x0880B98E/0x0880B90C), mountain (0x0880B94D), or foot (everything else). This pools all foot classes together for maximum randomization. Excludes `ENEMY_EXCLUDED_JIDS` (Manakete, Bard, Dancer, JIDs 103–123), lord classes, and trainees from pools. `include_monsters: true` adds `MONSTER_JIDS | EXTRA_MONSTER_JIDS`. `randomize_monster_classes: false` (default) keeps monster-class enemies in their original class; only their items are randomized. `include_bosses: false` (default) skips `BOSS_PIDS` from randomization. `FINAL_BOSS_PID=0xBE` always excluded regardless of settings. `omit_classes: [SHAMAN]` excludes specific JID enum names from the enemy pool. **Item randomization** replicates player `mode: random` logic — keeps weapons if the new class allows that weapon type (ignores rank — enemies can wield any weapon their class allows). Prefers limited monster weapon pools (`MONSTER_WEAPON_POOLS`) when the new class is a monster with restricted item access. Falls back to `_pick_weapon_for_type()` for class-compatible weapons. Clears slots for weaponless classes.
+- **Enemy randomization** (`randomize_enemies`): operates on generic enemies (PID 35–255). **Class randomization** changes both `CharacterData.jidDefault` (Phase A) and UD entry class bytes (Phase B). Groups by movement category via `_move_group_key()`: flyer, water, mountain, or foot — foot classes pooled together for max variety. Excludes `ENEMY_EXCLUDED_JIDS`, lord classes, and trainees. `include_monsters: true` adds `MONSTER_JIDS | EXTRA_MONSTER_JIDS`. `randomize_monster_classes: false` (default) keeps monster-class enemies in original class. `include_bosses: false` (default) skips BOSS_PIDS. `FINAL_BOSS_PID=0xBE` always excluded. **Item randomization** replicates player `mode: random` — keeps weapons if new class allows that weapon type (ignores rank). Prefers `MONSTER_WEAPON_POOLS` for restricted monsters, falls back to `_pick_weapon_for_type()`. Clears slots for weaponless classes.
 
 ## UD array scanner gotchas
 - `_scan_ud_arrays` searches for `{0x40..0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4}` + 0x2C pattern, reads pointer at pos+4 in ROM data. Covers LOAD-event-referenced UD arrays. Uses `_ud_array_at_lenient` for validation.
@@ -58,7 +58,6 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
 
 ## Config quirks
 - `seed:` in config ignored when `--seed` CLI arg given
-- Weapon `enabled: random` is truthy — triggers per-stat gaussian randomization mode
 - `affinity_randomization.enabled: shuffle` is truthy — Python treats `'shuffle'` as truthy, enabling random affinity assignment
 
 ## Promotion items
