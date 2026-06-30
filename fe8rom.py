@@ -422,6 +422,12 @@ MONSTER_BLOCKED_ITEM_IDS = {
     0xB5,  # Stone / Monster Stone
 }
 
+BALLISTA_ITEM_IDS = {
+    0x23,  # Iron Ballista
+    0x24,  # Killer Ballista
+    0x25,  # Ballista
+}
+
 # Palette mapping tables
 # FE8 uses two character-indexed tables (7 bytes each, indexed by PID-1)
 # to associate characters with their custom color palettes per class tier.
@@ -554,7 +560,7 @@ def build_weapon_pools(rom):
         stored_id = raw[6]
         wep_type = raw[7]
         wep_rank = raw[0x1C]
-        if stored_id != item_id or stored_id in MONSTER_BLOCKED_ITEM_IDS or stored_id in STORY_EXCLUSIVE_ITEM_IDS:
+        if stored_id != item_id or stored_id in MONSTER_BLOCKED_ITEM_IDS or stored_id in STORY_EXCLUSIVE_ITEM_IDS or stored_id in BALLISTA_ITEM_IDS:
             continue
         if wep_type <= 7 and raw[0x14] > 0 and raw[0x19] > 0:
             if wep_type != 4 and raw[0x15] == 0:

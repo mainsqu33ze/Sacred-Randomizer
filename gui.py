@@ -336,7 +336,7 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card3, text="Randomize GiveItem events loot (houses, villages, etc.)", variable=self.loot_enabled).pack(anchor=tk.W, pady=2)
         ttk.Label(card3, text="Mode:").pack(anchor=tk.W, padx=15)
         ttk.Combobox(card3, textvariable=self.loot_mode, values=["random", "shuffle"], state="readonly").pack(anchor=tk.W, padx=25)
-        info = ttk.Label(card3, text="8 item IDs (0x7D-0x80, 0xA2-0xA5) are excluded from loot pools.", foreground="#555", font=("Segoe UI", 9))
+        info = ttk.Label(card3, text="8 item IDs (0x7D-0x80, 0xA2-0xA5) and ballistae (0x23-0x25) excluded from loot pools.", foreground="#555", font=("Segoe UI", 9))
         info.pack(anchor=tk.W, padx=15, pady=2)
 
     def _build_weapons_tab(self):

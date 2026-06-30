@@ -1,6 +1,6 @@
 import random
 import struct
-from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE, ITEM_NAMES
+from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, BALLISTA_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE, ITEM_NAMES
 
 PLAYABLE_PIDS = set(range(PID.EIRIKA, PID.TANA + 1))
 PLAYABLE_PLAYABLE_PIDS = {
@@ -751,6 +751,12 @@ def _scan_giveitem_events(rom):
             break
         if pos + 20 > len(data):
             break
+        # Skip false positives where 40 0A 00 00 is a sub-command of the
+        # "erase by superimposing on lord" command (40 05 [slot] 00 [target_pid] 40 0A 00 00 [ptr]).
+        # In this pattern 40 05 appears 8 bytes before 40 0A 00 00.
+        if pos >= 8 and data[pos-8:pos-6] == b'\x40\x05':
+            pos += 1
+            continue
         # Validate GiveItem structure
         ptr = struct.unpack_from('<I', data, pos + 4)[0]
         at_8 = data[pos + 8]
@@ -830,6 +836,7 @@ def _scan_loot_events(rom):
     loot_excluded.update(PROMOTION_ITEM_IDS)
     loot_excluded.update({0x3D, 0x44, 0x8A})  # dummy items
     loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    loot_excluded.update(BALLISTA_ITEM_IDS)
     seen = set()
     for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
         if item_id not in loot_excluded:
@@ -848,6 +855,7 @@ def _build_loot_pool(rom):
     excluded.update({0x3D, 0x44, 0x8A})  # dummy items
     excluded.update(PROMOTION_ITEM_IDS)  # promotion items reserved for promo phase
     excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    excluded.update(BALLISTA_ITEM_IDS)
     pool = []
     for item_id in range(1, 0xC0):
         if item_id not in excluded:
@@ -911,7 +919,7 @@ def randomize_event_items(rom, modified_pids):
     patched = 0
 
     for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
             continue
 
         idd = ItemData(rom, item_id)
@@ -1136,7 +1144,7 @@ def randomize_weapon_stats(rom, config):
             continue
         if wep_type > 7:
             continue
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
             continue
         if raw[0x14] == 0:
             continue
@@ -1207,11 +1215,11 @@ def randomize_weapon_effects(rom, config):
             continue
         if wep_type > 7:
             continue
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
             continue
         if raw[0x14] == 0:
-            continue
 
+            continue
         if random.randint(1, 100) <= chance:
             eff = random.choices(effect_ids, weights=weights, k=1)[0]
             rom.write_u8(off + 0x1F, eff)

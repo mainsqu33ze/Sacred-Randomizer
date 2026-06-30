@@ -30,3 +30,14 @@ _debug_chest_format.py
 _debug_chest_giveitem.py
 _debug_chest_sections.py
 _debug_format_b.py
+_debug_ch3.py
+_debug_ch3_event.py
+_debug_class_data.py
+_debug_map_sprite.py
+_trace_20_12_handler.py
+_find_pid37_all.py
+_analyze_crash.py
+_analyze_pid37.py
+_check_class_data_integrity.py
+_check_event_structure.py
+_check_pid37_placement.py
