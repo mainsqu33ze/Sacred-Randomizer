@@ -12,7 +12,7 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
 ## Entrypoints & structure
 - `fe8_randomizer.py` — CLI entrypoint (argparse)
 - `gui.py` — Tkinter GUI (standalone, `python gui.py`; unused by CLI path)
-- `randomizer.py` — `apply_config()` orchestrates in order: class → growths → base stats → **promo gain sync** → affinity → weapon stats → weapon effects → promotion items → unit defs → enemy randomize → **palette mapping** → unit items → loot
+- `randomizer.py` — `apply_config()` orchestrates in order: class → growths → base stats → **promo gain sync** → affinity → weapon stats → weapon effects → promotion items → unit defs → **prf weapon type fix** → enemy randomize → **palette mapping** → unit items → loot
 - `fe8rom.py` — ROM binary parsing: `ROM`, `CharacterData`, `ClassData`, `ItemData`, `ChapterData`, enums (`PID`, `JID`), `build_weapon_pools()`
 - `scripts/_check_*` / `_find_*` / `_dump_*` — standalone dev diagnostics, not part of randomizer
 
@@ -41,13 +41,12 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
   - `'shuffle'`: permutes the 7 growth values within each class.
   - `'pool'`: distributes `pool_total` across 7 stats (7 random weights normalized to total, clamped).
 - **Item mode**: `mode: random` (default) picks random weapons from pools for invalid class-weapon combos. `mode: shuffle` permutes all items across UD arrays.
-- **Event items** (GiveItem + chests): Two scanner functions:
+- **Prf weapon type fix** (`_fix_prf_weapon_types`): After class randomization, Rapier (0x09) and Sieglinde (0x85) get their weapon_type byte changed to a type Eirika's new class can wield. Reginleif (0x78) and Siegmund (0x92) get the same treatment for Ephraim's new class. Also sets the character lock Ability 4 byte (offset 0x21) to 0x0A (10 for Eirika) or 0x14 (20 for Ephraim), so the weapons check PID instead of class. Additionally copies the lord-class attribute lock bits (Eirika Lord: bits 17+28 = 0x10020000; Ephraim Lord: bit 29 = 0x20000000) into the character's PersonalInfo attributes at offset 0x28, so the character can equip locked items regardless of their current class. Only triggers when the character's class was randomized. Character lock is set unconditionally for randomized characters; weapon_type is only changed when the new class has at least one weapon proficiency. Prefers keeping the original type if still usable; otherwise picks the first available type from the new class.
+- **Event items** (GiveItem only): One scanner function:
   - `_scan_giveitem_events()`: Searches for `40 0A 00 00` header + any GBA pointer (`0x08000000-0x08FFFFFF`) + `40 05` subcommand + valid item ID. Yields `(write_offset, item_id, '<I')` where write_offset = pos+12 (u32 item field). Catches all GiveItem variants (Format A with pointer `0x08591F40` + ~24 other-pointer variants), finding ~79 events vs 52 with the old Format-A-only pattern.
-  - `_scan_chest_events()`: Scans Location Events tables (types `0x0C/0x10/0x11/0x12/0x14/0x16`) across all 35 chapters. Chest entries (type `0x12`) have format: flag(1) | type(1) | x(1) | y(1) | item(u16 at +4) | unk(u16 at +6) | script(u32 at +8). Yields `(write_offset, item_id, '<H')` where write_offset = off+4 (u16 item field). Finds 5 real chest entries (Ch4, Ch16, Ch26, Ch27, Ch29).
-  - `_scan_loot_events()`: Combines both sources, filters out `PROMOTION_ITEM_IDS`, `MONSTER_BLOCKED_ITEM_IDS`, `STORY_EXCLUSIVE_ITEM_IDS`, and dummy items (`0x3D, 0x44, 0x8A`). Yields `(write_offset, item_id, pack_fmt)`.
-  - Write formats: GiveItem uses `<I` (u32), chests use `<H` (u16) — using `<I` on chests corrupts byte 6-7 (unknown field).
-  - Both shuffle and random modes run via `randomize_loot()` (no separate mode for event items).
-- **Loot randomization** (`loot_randomization`): `mode: random | shuffle`. Scans GiveItem (`0x1E`) commands plus chest Location Events via `_scan_loot_events()`. Previously used two false-positive filters (now absorbed into `_scan_giveitem_events`'s strict 40-format validation). Runs after promotion item conversion.
+  - `_scan_chest_events()`: exists as a function but **disabled** — Location Events entries with type 0x12 were confirmed as Always Events / Map Objects, not chests. No chest items are accessible via Location Events tables.
+  - `_scan_loot_events()`: Scans GiveItem events only, filters out `PROMOTION_ITEM_IDS`, `MONSTER_BLOCKED_ITEM_IDS`, `STORY_EXCLUSIVE_ITEM_IDS`, dummy items (`0x3D, 0x44, 0x8A`), and safe-excluded items (`0x7D-0x80, 0xA2-0xA5`). Yields `(write_offset, item_id, pack_fmt)`.
+- **Loot randomization** (`loot_randomization`): `mode: random | shuffle`. Scans GiveItem (`0x1E`) commands only via `_scan_loot_events()` (chest Location Events scan disabled — false positives). Runs after promotion item conversion.
 - **Boss buffs** (`boss_buffs`): sub-section of `enemy_randomization` active when `include_bosses: true`. `growths.mode` / `base_stats.mode` support `<number>` (scale), `random_buff` (per-stat random factor), or `random` (gaussian). `max_weapon_ranks: true` sets Wexp=251 (S-rank) for all weapon types the boss's class can use, and zeroes out types the class can't use. Applied between Phase A and Phase B, on CharacterData only.
 - **Enemy randomization** (`randomize_enemies`): operates on generic enemies (PID 35–255). **Class randomization** changes both `CharacterData.jidDefault` (Phase A) and UD entry class bytes (Phase B). Groups by movement category via `_move_group_key()`: flyer, water, mountain, or foot — foot classes pooled together for max variety. Excludes `ENEMY_EXCLUDED_JIDS`, lord classes, and trainees. `include_monsters: true` adds `MONSTER_JIDS | EXTRA_MONSTER_JIDS`. `randomize_monster_classes: false` (default) keeps monster-class enemies in original class. `include_bosses: false` (default) skips BOSS_PIDS. `FINAL_BOSS_PID=0xBE` always excluded. **Item randomization** replicates player `mode: random` — keeps weapons if new class allows that weapon type (ignores rank). Prefers `MONSTER_WEAPON_POOLS` for restricted monsters, falls back to `_pick_weapon_for_type()`. Clears slots for weaponless classes.
 
@@ -85,7 +84,7 @@ Phases (in `randomize_promotion_items`):
 
 ## Enemy randomization constants
 - `ENEMY_EXCLUDED_JIDS`: Manakete (0x0E), Bard (0x46), Dancer (0x4D), Fleet (0x50), Phantom (0x51), Demon King (0x66), and 0x67–0x7B (civilians + unused JIDs).
-- `BOSS_PIDS`: set(range(0x40, 0x64)) | {0x68, 0x6A, 0x6B, 0x6C, 0x6D} — PIDs 0x40–0x63 (64–99) + stragglers, excluded unless `include_bosses: true`.
+- `BOSS_PIDS`: set(range(0x40, 0x64)) | {0x28, 0x68, 0x6A, 0x6B, 0x6C, 0x6D} — PIDs 0x40–0x63 (64–99) + Lyon (0x28) + stragglers, excluded unless `include_bosses: true`.
 - `FINAL_BOSS_PID = 0xBE` — PID 190, always excluded regardless of `include_bosses`.
 - `MONSTER_WEAPON_POOLS`: limited item pools for specific monster JIDs (MANAKETE_2 → 0x90, REVENANT/ENTOUMBED/BAEL/ELDER_BAEL → [0x8B, 0xAD, 0xAE, 0xAF], MAUTHEDOOG/GWYLLGI → [0xB1, 0xB2], MOGALL/ARCH_MOGALL → [0xB3, 0xB4, 0xAC], GORGON → [0xAC, 0xAB, 0xB5]).
 - `EXTRA_MONSTER_JIDS` = {0x7C, 0x7D} — JIDs beyond the enum range.

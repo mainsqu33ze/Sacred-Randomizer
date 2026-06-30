@@ -160,3 +160,8 @@ enemy_randomization:
 loot_randomization:
   enabled: true        # true = enable loot randomization
   mode: random          # 'random' or 'shuffle'
+  # Items excluded from both loot pools and replacement:
+  #   0x7D-0x80, 0xA2-0xA5 — safe-excluded items
+  #   Chest items are not randomized (Location Events scan is disabled
+  #   due to false positives with Always Events / Map Objects).
+  #   See AGENTS.md for the full exclusion list.

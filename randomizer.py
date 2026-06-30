@@ -81,7 +81,7 @@ ENEMY_EXCLUDED_JIDS = {
 # Boss PIDs — set of PIDs treated as unique boss units.
 # Default covers PIDs 0x40–0x63 (64–99) and some stragglers 0x68–0x6D (104–109)
 # matching the user's ROM layout.  Excluded by default unless include_bosses: true.
-BOSS_PIDS = set(range(0x40, 0x64)) | {0x68, 0x6A, 0x6B, 0x6C, 0x6D}
+BOSS_PIDS = set(range(0x40, 0x64)) | {0x28, 0x68, 0x6A, 0x6B, 0x6C, 0x6D}
 # Final boss PID — always excluded from randomization regardless of settings.
 FINAL_BOSS_PID = 0xBE
 
@@ -975,6 +975,54 @@ def _shuffle_unit_items(rom):
         data[arr_pos + 12 + slot_idx] = new_id
 
     return len(items_by_entry)
+
+
+def _fix_prf_weapon_types(rom, modified_pids):
+    """Change prf weapon types and set character lock ability.
+
+    Rapier (0x09) and Sieglinde (0x85) get their weapon_type changed to
+    a type Eirika's new class can wield. Reginleif (0x78) and Siegmund
+    (0x92) get the same treatment for Ephraim's new class. Also sets
+    the character lock Ability 4 byte (offset 0x21) to 0x0A (10 for
+    Eirika) or 0x14 (20 for Ephraim), so the weapons check PID instead
+    of class. Character lock is set unconditionally for randomized
+    characters; weapon_type is only changed when the new class has at
+    least one weapon proficiency. Prefers keeping the original type if
+    still usable; otherwise picks the first available type.
+
+    Also copies the lord-class attribute lock bits (offset 0x28 in
+    ClassData) into the character's PersonalInfo attributes, so the
+    character can equip items with the corresponding Ability 4 lock
+    regardless of their current class.
+    """
+    # Attribute bit masks from the lord classes' ClassData:
+    #   Eirika Lord (JID 2): bits 13 (0x2000), 17 (0x20000), 28 (0x10000000)
+    #   Ephraim Lord (JID 1): bits 13 (0x2000), 29 (0x20000000)
+    # Bits 17+28 (0x10020000) are the Eirika Lock; bit 29 (0x20000000) is Ephraim Lock.
+    CHAR_LOCK_ATTRS = {
+        PID.EIRIKA: (0x0A, 0x10020000, [0x09, 0x85]),
+        PID.EPHRAIM: (0x14, 0x20000000, [0x78, 0x92]),
+    }
+    for pid, (ability_val, lock_attrs, item_ids) in CHAR_LOCK_ATTRS.items():
+        if pid not in modified_pids:
+            continue
+        # Set character attribute bits so the character retains lock regardless of class
+        char_off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        cur_attrs = struct.unpack_from('<I', rom.data, char_off + 0x28)[0]
+        if not (cur_attrs & lock_attrs):
+            struct.pack_into('<I', rom.data, char_off + 0x28, cur_attrs | lock_attrs)
+        cd = CharacterData(rom, pid)
+        jd = ClassData(rom, cd.jidDefault)
+        usable = [i for i in range(8) if jd.baseWexp[i] > 0]
+        for item_id in item_ids:
+            off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+            if off + ITEM_DATA_SIZE > len(rom.data):
+                continue
+            rom.data[off + 0x21] = ability_val
+            if usable:
+                orig_type = 0 if pid == PID.EIRIKA else 1
+                new_type = orig_type if orig_type in usable else usable[0]
+                rom.data[off + 7] = new_type
 
 
 def randomize_unit_items(rom, modified_pids):
@@ -2207,6 +2255,8 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     patched = patch_unit_definitions(rom, modified_pids)
     if patched:
         print(f"Patched {patched} unit definition(s) to use new default classes")
+
+    _fix_prf_weapon_types(rom, modified_pids)
 
     enemy_patched = randomize_enemies(rom, config)
     if enemy_patched:
