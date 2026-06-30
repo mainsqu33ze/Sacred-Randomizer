@@ -52,7 +52,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 | `weapon_effects` | Adds special effects (poison, nosferatu, etc.) |
 | `affinity_randomization` | Randomizes support affinities |
 | `promotion_items` | Unifies all promotion items as Master Seals |
-| `loot_randomization` | Randomizes items from chests, events, and side objectives |
+| `loot_randomization` | Randomizes items from GiveItem events (houses, villages, story events, recruitment) |
 | `enemy_randomization` | Randomizes generic enemy classes & loadouts on maps |
 
 
@@ -62,7 +62,7 @@ When running the randomizer with an untouched `config.yaml`, the default profile
 * **Playable Characters:** Classes are shuffled (unpromoted to unpromoted, promoted to promoted) without duplication. Custom colors/palettes are intelligently mapped to their new classes. A single unit is guaranteed to become a Manakete.
 * **Map Enemies:** Generic enemy classes and inventories are randomized. Their classes respect original map placement boundaries (e.g., flying units replace flying units) so they don't get trapped on mountains or oceans. Bosses are left vanilla.
 * **Items & Mechanics:** Inventories auto-adjust so randomized units always spawn with weapons they can actually wield. All promotion items are universally mapped to function as **Master Seals** for ease of progression.
-* **Stats & Growths:** Character growths, base stats, weapon values, and item/chest loot locations remain identical to vanilla rules.
+* **Stats & Growths:** Character growths, base stats, weapon values, and event loot locations remain identical to vanilla rules. Chest scanning via Location Events is disabled (entries were false positives).
 
 ### class_randomization
 
@@ -179,6 +179,8 @@ item_randomization:
 
 **Weapon rank transfer:** When a character's class changes, weapon ranks are adjusted to match the new class. Ranks for weapon types the new class can't use are zeroed out. For supported types, the character keeps whichever is higher — their existing rank or the class's base. Additionally, if the character had their highest rank in a type they can no longer use, that rank is transferred to their weakest supported type, so Eirika's S-rank swords aren't wasted when she becomes a Mage.
 
+**Prf weapon type fix:** When Eirika or Ephraim is randomized to a new class, their personal weapons (Rapier `0x09` / Sieglinde `0x85` for Eirika; Reginleif `0x78` / Siegmund `0x92` for Ephraim) get their `weapon_type` byte updated to a type their new class can wield. The Ability 4 byte (offset `0x21`) is set to `0x0A` (Eirika lock) or `0x14` (Ephraim lock), making weapons check PID instead of class. Lord-class attribute lock bits from the class data are also copied into the character's PersonalInfo attributes (offset `0x28`) — Eirika gets bits 17+28 (`0x10020000`), Ephraim gets bit 29 (`0x20000000`) — so the equipped character always passes the item lock check regardless of their current class. This ensures lords can always use their signature weapons even after class randomization.
+
 ### weapon_randomization
 
 Randomizes numeric stats (Might / Hit / Weight / Crit) independently per stat:
@@ -261,7 +263,7 @@ When enabled, every promotion item (Heaven Seal, Ocean Seal, etc.) behaves like 
 
 ### loot_randomization
 
-Randomizes items from chests, house visits, story events, and side objectives:
+Randomizes items from GiveItem events (houses, villages, story events, recruitment rewards):
 
 ```yaml
 loot_randomization:
@@ -274,6 +276,10 @@ loot_randomization:
 - `shuffle`: all loot item IDs across all chapters are collected, permuted, and redistributed — the same pool of items appears, just in different locations.
 
 Scans each chapter's event data for `GiveItem` (`0x1E`) commands, which covers villages, houses, story events, and recruitment rewards.
+
+**Chest scanning is disabled:** Previous attempts to find chest items via Location Events tables (type `0x12`) produced false positives — those entries are Always Events / Map Objects, not chests. Only GiveItem events are randomized.
+
+**Excluded item IDs from loot pools (8 IDs):** `0x7D`, `0x7E`, `0x7F`, `0x80`, `0xA2`, `0xA3`, `0xA4`, `0xA5` — these are map-spawn-only deployable items not meant for loot tables. They join the existing exclusions: monster-blocked items (16 IDs), story-exclusive items (Rapier etc.), promotion items, and dummy items (`0x3D`, `0x44`, `0x8A`).
 
 ### enemy_randomization
 

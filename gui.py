@@ -3,6 +3,8 @@ from tkinter import ttk, filedialog, messagebox
 import yaml
 import traceback
 import os
+from fe8rom import JID
+from randomizer import STANDARD_JIDS, ENEMY_EXCLUDED_JIDS, TRAINEE_JIDS
 
 
 class FE8RandomizerGUI(tk.Tk):
@@ -64,7 +66,6 @@ class FE8RandomizerGUI(tk.Tk):
         # Item & Loot Settings
         self.item_enabled = tk.BooleanVar(value=True)
         self.item_mode = tk.StringVar(value="random")
-        self.item_rand_events = tk.BooleanVar(value=False)
         self.promo_enabled = tk.BooleanVar(value=True)
         self.promo_universal = tk.BooleanVar(value=True)
         self.promo_replace_dist = tk.BooleanVar(value=True)
@@ -157,6 +158,12 @@ class FE8RandomizerGUI(tk.Tk):
         inner.bind("<Configure>", lambda e: c.configure(scrollregion=c.bbox("all")))
         c.create_window((0, 0), window=inner, anchor="nw")
         c.configure(yscrollcommand=s.set)
+
+        def _on_mousewheel(event):
+            c.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        c.bind("<MouseWheel>", _on_mousewheel)
+        inner.bind("<MouseWheel>", _on_mousewheel)
+
         c.pack(side="left", fill="both", expand=True)
         s.pack(side="right", fill="y")
         return inner
@@ -177,12 +184,83 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(card, text="Manakete count:").grid(row=1, column=0, sticky=tk.W, pady=4)
         ttk.Spinbox(card, from_=0, to=10, textvariable=self.manakete_count, width=5).grid(row=1, column=1, sticky=tk.W, padx=6)
 
-        ttk.Label(card, text="Omit classes (comma-sep JID names):").grid(row=2, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(card, textvariable=self.class_omit, width=30).grid(row=2, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Omit classes:").grid(row=2, column=0, sticky=tk.W, pady=4)
+        btn_frame = ttk.Frame(card)
+        btn_frame.grid(row=2, column=1, sticky=tk.W, padx=6)
+        ttk.Button(btn_frame, text="Select classes to omit...", command=lambda: self._open_class_picker(self.class_omit, self.omit_status, {j.value for j in STANDARD_JIDS})).pack(side=tk.LEFT)
+        self.omit_status = ttk.Label(btn_frame, text="", foreground="#555", font=("Segoe UI", 9))
+        self.omit_status.pack(side=tk.LEFT, padx=6)
+        self._update_omit_status()
 
         ttk.Checkbutton(card, text="Allow Soldier (no promotion path)", variable=self.include_soldier).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Checkbutton(card, text="Auto-map custom palettes to new classes", variable=self.palette_mapping).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+
+    def _update_omit_status(self):
+        omitted = [x.strip().upper() for x in self.class_omit.get().split(",") if x.strip()]
+        if omitted:
+            self.omit_status.config(text=f"{len(omitted)} selected")
+        else:
+            self.omit_status.config(text="(none)")
+
+    def _open_class_picker(self, target_var, status_label, valid_values=None):
+        """Open a popup with checkboxes for JIDs to select classes to omit.
+
+        If valid_values is a set of integer JID values, only those JIDs are shown.
+        """
+        win = tk.Toplevel(self)
+        win.title("Select classes to omit")
+        win.geometry("500x500")
+        win.transient(self)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        c = tk.Canvas(frame, borderwidth=0, highlightthickness=0)
+        s = ttk.Scrollbar(frame, orient="vertical", command=c.yview)
+        inner = ttk.Frame(c, padding=5)
+        inner.bind("<Configure>", lambda e: c.configure(scrollregion=c.bbox("all")))
+        c.create_window((0, 0), window=inner, anchor="nw")
+        c.configure(yscrollcommand=s.set)
+
+        def _mw(event):
+            c.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        c.bind("<MouseWheel>", _mw)
+        inner.bind("<MouseWheel>", _mw)
+
+        c.pack(side="left", fill="both", expand=True)
+        s.pack(side="right", fill="y")
+
+        current = set(x.strip().upper() for x in target_var.get().split(",") if x.strip())
+        vars_by_jid = {}
+
+        rows = [(jid.name, jid.value) for jid in JID if jid.value > 0 and (valid_values is None or jid.value in valid_values)]
+        rows.sort(key=lambda x: x[1])
+
+        for i, (name, val) in enumerate(rows):
+            var = tk.BooleanVar(value=name in current)
+            vars_by_jid[name] = var
+            ttk.Checkbutton(inner, text=f"{name} ({val})", variable=var).grid(row=i, column=0, sticky=tk.W, padx=4, pady=1)
+
+        btn_frame = ttk.Frame(win, padding=8)
+        btn_frame.pack(fill=tk.X)
+
+        def _ok():
+            selected = [n for n, v in vars_by_jid.items() if v.get()]
+            target_var.set(", ".join(selected))
+            if status_label:
+                if selected:
+                    status_label.config(text=f"{len(selected)} selected")
+                else:
+                    status_label.config(text="(none)")
+            win.destroy()
+
+        def _cancel():
+            win.destroy()
+
+        ttk.Button(btn_frame, text="OK", command=_ok).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side=tk.RIGHT, padx=4)
 
     def _build_stats_tab(self):
         tab = self._scrollable_tab("Stats & Growths")
@@ -243,7 +321,7 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Auto-adjust inventories for new classes", variable=self.item_enabled).pack(anchor=tk.W, pady=2)
         ttk.Label(card, text="Mode:").pack(anchor=tk.W, padx=15)
         ttk.Combobox(card, textvariable=self.item_mode, values=["random", "shuffle"], state="readonly").pack(anchor=tk.W, padx=25)
-        ttk.Checkbutton(card, text="Randomize GiveItem events (slow)", variable=self.item_rand_events).pack(anchor=tk.W, padx=15, pady=2)
+        ttk.Label(card, text="Prf weapons (Rapier, Sieglinde, Reginleif, Siegmund) auto-adopt\ntheir lord's new class weapon type. Character lock is set via\nAbility 4 byte + class attribute bits for equip compatibility.", foreground="#555", font=("Segoe UI", 9)).pack(anchor=tk.W, padx=15, pady=2)
 
         card2 = ttk.LabelFrame(tab, text=" Promotion Items ", padding=10)
         card2.pack(fill=tk.X, pady=4)
@@ -255,9 +333,11 @@ class FE8RandomizerGUI(tk.Tk):
         card3 = ttk.LabelFrame(tab, text=" Loot Randomization ", padding=10)
         card3.pack(fill=tk.X, pady=4)
 
-        ttk.Checkbutton(card3, text="Randomize chests, houses, events loot", variable=self.loot_enabled).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(card3, text="Randomize GiveItem events loot (houses, villages, etc.)", variable=self.loot_enabled).pack(anchor=tk.W, pady=2)
         ttk.Label(card3, text="Mode:").pack(anchor=tk.W, padx=15)
         ttk.Combobox(card3, textvariable=self.loot_mode, values=["random", "shuffle"], state="readonly").pack(anchor=tk.W, padx=25)
+        info = ttk.Label(card3, text="8 item IDs (0x7D-0x80, 0xA2-0xA5) are excluded from loot pools.", foreground="#555", font=("Segoe UI", 9))
+        info.pack(anchor=tk.W, padx=15, pady=2)
 
     def _build_weapons_tab(self):
         tab = self._scrollable_tab("Weapons & Magic")
@@ -322,8 +402,15 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Randomize existing monster enemies too", variable=self.enemy_rand_monsters).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15)
         ttk.Checkbutton(card, text="Include bosses in randomization", variable=self.enemy_inc_bosses).grid(row=6, column=0, columnspan=2, sticky=tk.W, padx=15)
 
-        ttk.Label(card, text="Omit classes (comma-sep JID names):").grid(row=7, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(card, textvariable=self.enemy_omit, width=30).grid(row=7, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Omit classes:").grid(row=7, column=0, sticky=tk.W, pady=4)
+        btn_frame2 = ttk.Frame(card)
+        btn_frame2.grid(row=7, column=1, sticky=tk.W, padx=6)
+        enemy_valid = {j.value for j in STANDARD_JIDS} - {1, 2, 3, 4} - {j.value for j in TRAINEE_JIDS} - ENEMY_EXCLUDED_JIDS
+        ttk.Button(btn_frame2, text="Select classes to omit...", command=lambda: self._open_class_picker(self.enemy_omit, self.enemy_omit_status, enemy_valid)).pack(side=tk.LEFT)
+        self.enemy_omit_status = ttk.Label(btn_frame2, text="", foreground="#555", font=("Segoe UI", 9))
+        self.enemy_omit_status.pack(side=tk.LEFT, padx=6)
+        omitted = [x.strip().upper() for x in self.enemy_omit.get().split(",") if x.strip()]
+        self.enemy_omit_status.config(text=f"{len(omitted)} selected" if omitted else "(none)")
 
         # Class Growths -------------------------------------------------
         cg = ttk.LabelFrame(tab, text=" Enemy Class Growth Rates ", padding=10)
@@ -420,7 +507,6 @@ class FE8RandomizerGUI(tk.Tk):
             "item_randomization": {
                 "enabled": self.item_enabled.get(),
                 "mode": self.item_mode.get(),
-                "randomize_events": self.item_rand_events.get(),
             },
             "weapon_randomization": {
                 "enabled": self.wpn_enabled.get(),
@@ -559,7 +645,6 @@ class FE8RandomizerGUI(tk.Tk):
             it = d.get("item_randomization", {})
             self.item_enabled.set(_bool(it.get("enabled")))
             self.item_mode.set(it.get("mode", "random"))
-            self.item_rand_events.set(_bool(it.get("randomize_events")))
 
             w = d.get("weapon_randomization", {})
             self.wpn_enabled.set(_bool(w.get("enabled")))
