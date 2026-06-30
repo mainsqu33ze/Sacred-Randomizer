@@ -405,6 +405,8 @@ STORY_EXCLUSIVE_ITEM_IDS = {
 
 MONSTER_BLOCKED_ITEM_IDS = {
     0x0A,  # Dummy / Mani Katti (unused, locked to Eirika)
+    0x3D,  # Dummy (placeholder anima tome)
+    0x44,  # Dummy (placeholder light tome)
     0x90,  # Wretched Air
     0xA6,  # Nightmare
     0xA8,  # Demon Light
@@ -423,9 +425,9 @@ MONSTER_BLOCKED_ITEM_IDS = {
 }
 
 BALLISTA_ITEM_IDS = {
-    0x23,  # Iron Ballista
-    0x24,  # Killer Ballista
-    0x25,  # Ballista
+    0x35,  # Ballista
+    0x36,  # Iron Ballista
+    0x37,  # Killer Ballista
 }
 
 # Palette mapping tables
@@ -550,7 +552,10 @@ ITEM_NAMES = {
     0xBB: 'Gold Gem',
 }
 
-def build_weapon_pools(rom):
+def build_weapon_pools(rom, include_ballista=False):
+    excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
+    if not include_ballista:
+        excluded |= BALLISTA_ITEM_IDS
     pools = {t: [] for t in range(8)}
     for item_id in range(256):
         off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
@@ -560,7 +565,7 @@ def build_weapon_pools(rom):
         stored_id = raw[6]
         wep_type = raw[7]
         wep_rank = raw[0x1C]
-        if stored_id != item_id or stored_id in MONSTER_BLOCKED_ITEM_IDS or stored_id in STORY_EXCLUSIVE_ITEM_IDS or stored_id in BALLISTA_ITEM_IDS:
+        if stored_id != item_id or stored_id in excluded:
             continue
         if wep_type <= 7 and raw[0x14] > 0 and raw[0x19] > 0:
             if wep_type != 4 and raw[0x15] == 0:

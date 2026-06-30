@@ -171,6 +171,7 @@ item_randomization:
   enabled: true
   mode: random              # 'random' = pick from weapon pools; 'shuffle' = permute all items
   randomize_events: false   # also randomize GiveItem events (slow)
+  include_ballista_items: false   # true = allow ballista items (0x35–0x37) in all pools
 ```
 
 - **`mode: random`**: picks a random usable weapon for each slot. Existing weapons are kept only if the class+rank supports them.
@@ -279,7 +280,7 @@ Scans each chapter's event data for `GiveItem` (`0x1E`) commands, which covers v
 
 **Chest scanning is disabled:** Previous attempts to find chest items via Location Events tables (type `0x12`) produced false positives — those entries are Always Events / Map Objects, not chests. Only GiveItem events are randomized.
 
-**Excluded item IDs from loot pools (8 IDs):** `0x7D`, `0x7E`, `0x7F`, `0x80`, `0xA2`, `0xA3`, `0xA4`, `0xA5` — these are map-spawn-only deployable items not meant for loot tables. They join the existing exclusions: monster-blocked items (16 IDs), story-exclusive items (Rapier etc.), promotion items, and dummy items (`0x3D`, `0x44`, `0x8A`).
+**Excluded item IDs from loot pools (8 IDs):** `0x7D`, `0x7E`, `0x7F`, `0x80`, `0xA2`, `0xA3`, `0xA4`, `0xA5` — these are map-spawn-only deployable items not meant for loot tables. They join the existing exclusions: monster-blocked items (now includes dummy items `0x3D`, `0x44`), story-exclusive items (Rapier etc.), promotion items, ballista items (`0x35`–`0x37`, unless `include_ballista_items: true`), and dummy item `0x8A`.
 
 ### enemy_randomization
 
@@ -361,6 +362,7 @@ item_randomization:
   enabled: true
   mode: random
   randomize_events: false
+  include_ballista_items: false
 
 weapon_randomization:
   enabled: false

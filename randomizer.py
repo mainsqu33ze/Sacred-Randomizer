@@ -823,7 +823,7 @@ def _scan_chest_events(rom):
                 entry_idx += 1
 
 
-def _scan_loot_events(rom):
+def _scan_loot_events(rom, include_ballista=False):
     """Yield (write_offset, item_id, pack_fmt) for all lootable items.
 
     Combines GiveItem events and chest Location Events. Filters out
@@ -836,7 +836,8 @@ def _scan_loot_events(rom):
     loot_excluded.update(PROMOTION_ITEM_IDS)
     loot_excluded.update({0x3D, 0x44, 0x8A})  # dummy items
     loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
-    loot_excluded.update(BALLISTA_ITEM_IDS)
+    if not include_ballista:
+        loot_excluded.update(BALLISTA_ITEM_IDS)
     seen = set()
     for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
         if item_id not in loot_excluded:
@@ -845,7 +846,7 @@ def _scan_loot_events(rom):
                 yield write_offset, item_id, pack_fmt
 
 
-def _build_loot_pool(rom):
+def _build_loot_pool(rom, include_ballista=False):
     """Build list of eligible item IDs for random loot replacement.
 
     Includes all items 0x01-0xBF that are not monster-blocked,
@@ -855,7 +856,8 @@ def _build_loot_pool(rom):
     excluded.update({0x3D, 0x44, 0x8A})  # dummy items
     excluded.update(PROMOTION_ITEM_IDS)  # promotion items reserved for promo phase
     excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
-    excluded.update(BALLISTA_ITEM_IDS)
+    if not include_ballista:
+        excluded.update(BALLISTA_ITEM_IDS)
     pool = []
     for item_id in range(1, 0xC0):
         if item_id not in excluded:
@@ -863,9 +865,9 @@ def _build_loot_pool(rom):
     return pool
 
 
-def _shuffle_loot(rom):
+def _shuffle_loot(rom, include_ballista=False):
     """Collect all loot item IDs, shuffle them, and redistribute."""
-    items = list(_scan_loot_events(rom))
+    items = list(_scan_loot_events(rom, include_ballista))
     if len(items) < 2:
         return 0
     shuffled_ids = [item_id for _, item_id, _ in items]
@@ -877,13 +879,13 @@ def _shuffle_loot(rom):
     return len(items)
 
 
-def _randomize_loot(rom):
+def _randomize_loot(rom, include_ballista=False):
     """Replace each loot item with a random eligible replacement."""
-    pool = _build_loot_pool(rom)
+    pool = _build_loot_pool(rom, include_ballista)
     if not pool:
         return 0
     patched = 0
-    for write_offset, item_id, pack_fmt in _scan_loot_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_loot_events(rom, include_ballista):
         new_id = random.choice(pool)
         if new_id != item_id:
             struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
@@ -901,25 +903,29 @@ def randomize_loot(rom, config):
     rules = config.get('loot_randomization', {})
     if not rules.get('enabled', False):
         return 0
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
     mode = rules.get('mode', 'random')
     if mode == 'shuffle':
-        return _shuffle_loot(rom)
-    return _randomize_loot(rom)
+        return _shuffle_loot(rom, include_ballista)
+    return _randomize_loot(rom, include_ballista)
 
 
-def randomize_event_items(rom, modified_pids):
+def randomize_event_items(rom, config, modified_pids):
     """Randomize items given via GiveItem event commands in chapter data.
     
     Replaces weapon items with random weapons from the pools. Non-weapon items
     (vulneraries, keys, promo items) are left as-is. Skips story-exclusive
     and monster-blocked items.
     """
-    weapon_pools = build_weapon_pools(rom)
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    weapon_pools = build_weapon_pools(rom, include_ballista)
     data = rom.data
     patched = 0
 
     for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
 
         idd = ItemData(rom, item_id)
@@ -1033,9 +1039,10 @@ def _fix_prf_weapon_types(rom, modified_pids):
                 rom.data[off + 7] = new_type
 
 
-def randomize_unit_items(rom, modified_pids):
+def randomize_unit_items(rom, config, modified_pids):
     """Assign random weapons matching each unit's new class in all UnitDefinition arrays."""
-    weapon_pools = build_weapon_pools(rom)
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    weapon_pools = build_weapon_pools(rom, include_ballista)
 
     data = rom.data
     total_patched = 0
@@ -1105,6 +1112,8 @@ def randomize_weapon_stats(rom, config):
     if not rules.get('enabled', False):
         return
 
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+
     mean = rules.get('mean', None)
     global_stddev = rules.get('stddev', 5)
 
@@ -1144,7 +1153,9 @@ def randomize_weapon_stats(rom, config):
             continue
         if wep_type > 7:
             continue
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
         if raw[0x14] == 0:
             continue
@@ -1173,6 +1184,8 @@ def randomize_weapon_effects(rom, config):
     chance = rules.get('enabled', False)
     if not chance:
         return
+
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
 
     effect_map = {
         'poison': 0x01,
@@ -1215,7 +1228,9 @@ def randomize_weapon_effects(rom, config):
             continue
         if wep_type > 7:
             continue
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS or item_id in BALLISTA_ITEM_IDS:
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
         if raw[0x14] == 0:
 
@@ -1637,7 +1652,8 @@ def randomize_enemies(rom, config):
 
     # Phase B + C: UD array class overrides and items
     if rand_classes or rand_items:
-        wep_pools = build_weapon_pools(rom) if rand_items else None
+        include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+        wep_pools = build_weapon_pools(rom, include_ballista) if rand_items else None
 
         for ud_offset in all_ud_offsets:
             arr_pos = ud_offset
@@ -2297,12 +2313,12 @@ def apply_config(rom_path, config, seed=None, output_path=None):
         if shuffled:
             print(f"Shuffled {shuffled} item(s) across unit definitions")
     elif item_rules.get('enabled', True):
-        item_patched = randomize_unit_items(rom, modified_pids)
+        item_patched = randomize_unit_items(rom, config, modified_pids)
         if item_patched:
             print(f"Randomized items for {item_patched} unit definition(s)")
 
     if item_rules.get('randomize_events', False) and mode != 'shuffle':
-        ev_patched = randomize_event_items(rom, modified_pids)
+        ev_patched = randomize_event_items(rom, config, modified_pids)
         if ev_patched:
             print(f"Randomized {ev_patched} event-given item(s)")
 
