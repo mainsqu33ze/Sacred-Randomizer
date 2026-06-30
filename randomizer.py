@@ -731,16 +731,18 @@ def _pick_weapon_for_type(rom, weapon_pools, char_ranks):
 
 
 def _scan_giveitem_events(rom):
-    """Yield (offset, item_id) for GiveItem commands in event data region.
+    """Yield (write_offset, item_id, pack_fmt) for GiveItem commands.
 
     Searches for the 40-format GiveItem command:
-      40 0A 00 00 40 1F 59 08 40 05 [slot] 00 [item_id_u32] [pid_field]
+      40 0A 00 00 [GBA_ptr] 40 05 [slot] 00 [item_id_u32] [rest...]
     at event data region 0x08800000-0x08A00000.
+    Both Format A (pointer 0x08591F40) and other-pointer variants are caught.
+    write_offset is the ROM offset where the u32 item_id lives; pack_fmt='<I'.
     """
     data = rom.data
     lo = rom_offset(0x08800000)
     hi = min(rom_offset(0x08A00000), len(data))
-    hdr = b'\x40\x0A\x00\x00\x40\x1F\x59\x08\x40\x05'
+    hdr = b'\x40\x0A\x00\x00'
     pos = lo
     seen = set()
     while True:
@@ -749,27 +751,91 @@ def _scan_giveitem_events(rom):
             break
         if pos + 20 > len(data):
             break
+        # Validate GiveItem structure
+        ptr = struct.unpack_from('<I', data, pos + 4)[0]
+        at_8 = data[pos + 8]
+        at_9 = data[pos + 9]
+        at_11 = data[pos + 11]
         item_id = struct.unpack_from('<I', data, pos + 12)[0]
-        if 0 < item_id < 0xC0:
+        # Valid: GBA pointer at +4, 40 05 at +8-9, 0x00 at +11, valid item_id
+        if (0x08000000 <= ptr <= 0x08FFFFFF and
+            at_8 == 0x40 and at_9 == 0x05 and at_11 == 0x00 and
+            0 < item_id < 0xC0):
             if pos not in seen:
                 seen.add(pos)
-                yield pos, item_id
+                yield pos + 12, item_id, '<I'
         pos += 1
 
 
-def _scan_loot_events(rom):
-    """Yield (offset, item_id) for GiveItem (40-format) commands in event data.
+def _scan_chest_events(rom):
+    """Yield (write_offset, item_id, pack_fmt) for chest items.
 
-    Delegates to _scan_giveitem_events but filters out promotion items
-    (including Master Seal placed by Phase 9), story-exclusive items,
-    monster-blocked items, and dummy items — these are not loot.
+    Chests are 12-byte Location Events table entries in section[2] (the
+    Location Events section) with type 0x12 (byte 1).
+    Format: flag(1) type(1) x(1) y(1) item(u16 at +4) unk(u16 at +6) script(u32 at +8).
+    write_offset is offset+4 where the u16 item_id lives; pack_fmt='<H'.
+
+    Only section[2] and section[6] with type 0x12 are scanned — type 0x00
+    entries in section[2] overlap with Always Events and cannot be
+    reliably distinguished from chests without chapter-specific heuristics.
+    """
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+    seen = set()
+
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        if event_data_ptr == 0:
+            continue
+        event_data_off = event_data_ptr - ROM_BASE
+
+        for sec_idx in (2, 6):
+            ptr = struct.unpack_from('<I', data, event_data_off + sec_idx * 4)[0]
+            if ptr == 0:
+                continue
+            off = ptr - ROM_BASE
+            if off < 0 or off + 12 > len(data):
+                continue
+
+            entry_idx = 0
+            while off + (entry_idx + 1) * 12 <= len(data):
+                raw = data[off + entry_idx * 12 : off + entry_idx * 12 + 12]
+                if all(b == 0 for b in raw):
+                    break
+                if raw[1] != 0x12:
+                    entry_idx += 1
+                    continue
+                item_val = struct.unpack_from('<H', raw, 4)[0]
+                script_ptr = struct.unpack_from('<I', raw, 8)[0]
+                if 0 < item_val < 0xC0 and 0x08000000 <= script_ptr <= 0x08FFFFFF:
+                    write_off = off + entry_idx * 12 + 4
+                    if write_off not in seen:
+                        seen.add(write_off)
+                        yield write_off, item_val, '<H'
+                entry_idx += 1
+
+
+def _scan_loot_events(rom):
+    """Yield (write_offset, item_id, pack_fmt) for all lootable items.
+
+    Combines GiveItem events and chest Location Events. Filters out
+    promotion items, story-exclusive items, monster-blocked items,
+    and dummy items — these are not loot.
+    write_offset is the ROM offset where the item ID should be written.
+    pack_fmt is '<I' for GiveItem (u32) or '<H' for chests (u16).
     """
     loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     loot_excluded.update(PROMOTION_ITEM_IDS)
     loot_excluded.update({0x3D, 0x44, 0x8A})  # dummy items
-    for offset, item_id in _scan_giveitem_events(rom):
+    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    seen = set()
+    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
         if item_id not in loot_excluded:
-            yield offset, item_id
+            if write_offset not in seen:
+                seen.add(write_offset)
+                yield write_offset, item_id, pack_fmt
 
 
 def _build_loot_pool(rom):
@@ -781,6 +847,7 @@ def _build_loot_pool(rom):
     excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     excluded.update({0x3D, 0x44, 0x8A})  # dummy items
     excluded.update(PROMOTION_ITEM_IDS)  # promotion items reserved for promo phase
+    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
     pool = []
     for item_id in range(1, 0xC0):
         if item_id not in excluded:
@@ -789,29 +856,29 @@ def _build_loot_pool(rom):
 
 
 def _shuffle_loot(rom):
-    """Collect all GiveItem loot item IDs, shuffle them, and redistribute."""
+    """Collect all loot item IDs, shuffle them, and redistribute."""
     items = list(_scan_loot_events(rom))
     if len(items) < 2:
         return 0
-    shuffled_ids = [item_id for _, item_id in items]
+    shuffled_ids = [item_id for _, item_id, _ in items]
     random.shuffle(shuffled_ids)
-    for (offset, _), new_id in zip(items, shuffled_ids):
-        cur = struct.unpack_from('<I', rom.data, offset + 12)[0]
+    for (write_offset, _, pack_fmt), new_id in zip(items, shuffled_ids):
+        cur = struct.unpack_from(pack_fmt, rom.data, write_offset)[0]
         if cur != new_id:
-            struct.pack_into('<I', rom.data, offset + 12, new_id)
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
     return len(items)
 
 
 def _randomize_loot(rom):
-    """Replace each GiveItem loot item with a random eligible replacement."""
+    """Replace each loot item with a random eligible replacement."""
     pool = _build_loot_pool(rom)
     if not pool:
         return 0
     patched = 0
-    for offset, item_id in _scan_loot_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_loot_events(rom):
         new_id = random.choice(pool)
         if new_id != item_id:
-            struct.pack_into('<I', rom.data, offset + 12, new_id)
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
             patched += 1
     return patched
 
@@ -843,7 +910,7 @@ def randomize_event_items(rom, modified_pids):
     data = rom.data
     patched = 0
 
-    for offset, item_id in _scan_giveitem_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
         if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
             continue
 
@@ -861,7 +928,7 @@ def randomize_event_items(rom, modified_pids):
 
         new_item_id = random.choice(candidates)
         if new_item_id != item_id:
-            struct.pack_into('<I', data, offset + 12, new_item_id)
+            struct.pack_into(pack_fmt, data, write_offset, new_item_id)
             patched += 1
 
     return patched
@@ -1299,23 +1366,13 @@ def randomize_promotion_items(rom, config):
         print(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
 
         # Phase 9: Replace promotion items in GiveItem event commands
-        # Scans ROM data section for 40-format GiveItem commands
-        # and replaces any promotion item with Master Seal 0x88.
+        # Uses the expanded GiveItem scanner and replaces any promotion item
+        # with Master Seal 0x88.
         ev_replaced = 0
-        hdr = b'\x40\x0A\x00\x00\x40\x1F\x59\x08\x40\x05'
-        lo = rom_offset(0x08800000)
-        hi = rom_offset(0x08A00000)
-        pos = lo
-        while pos + 20 < hi:
-            pos = data.find(hdr, pos, hi)
-            if pos == -1:
-                break
-            item_id = struct.unpack_from('<I', data, pos + 12)[0]
-            if item_id in PROMOTION_ITEM_IDS:
-                if item_id != MASTER_SEAL_ITEM_ID:
-                    struct.pack_into('<I', data, pos + 12, MASTER_SEAL_ITEM_ID)
-                    ev_replaced += 1
-            pos += 1
+        for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
+            if item_id in PROMOTION_ITEM_IDS and item_id != MASTER_SEAL_ITEM_ID:
+                struct.pack_into(pack_fmt, data, write_offset, MASTER_SEAL_ITEM_ID)
+                ev_replaced += 1
         if ev_replaced:
             total += 1
             print(f"Replaced {ev_replaced} promotion item(s) with Master Seal in GiveItem events")
@@ -2079,15 +2136,15 @@ def _write_report(orig_data, rom, config, seed, output_path):
         lines.append('  (none)')
     lines.append('')
 
-    # --- Event item swaps ---
-    lines.append('=== Event Item Changes ===')
+    # --- GiveItem event item swaps ---
+    lines.append('=== GiveItem Event Changes ===')
     ev_changed = 0
-    for offset, item_id in _scan_giveitem_events(rom):
-        if offset + 16 <= len(orig_data):
-            orig_item = struct.unpack_from('<I', orig_data, offset + 12)[0]
-            mod_item = struct.unpack_from('<I', data, offset + 12)[0]
+    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
+        if write_offset + 4 <= len(orig_data):
+            orig_item = struct.unpack_from(pack_fmt, orig_data, write_offset)[0]
+            mod_item = struct.unpack_from(pack_fmt, data, write_offset)[0]
             if orig_item != mod_item:
-                gba_addr = ROM_BASE + offset
+                gba_addr = ROM_BASE + write_offset
                 chapters = _find_chapters_for_gba_addr(rom, gba_addr)
                 ch_label = ', '.join(chapters) if chapters else 'Unknown'
                 orig_name = ITEM_NAMES.get(orig_item, f'0x{orig_item:02X}')
@@ -2095,6 +2152,25 @@ def _write_report(orig_data, rom, config, seed, output_path):
                 lines.append(f'  [{ch_label}] {orig_name} -> {mod_name}')
                 ev_changed += 1
     if ev_changed == 0:
+        lines.append('  (none)')
+    lines.append('')
+
+    # --- Chest item swaps ---
+    lines.append('=== Chest Item Changes ===')
+    chest_changed = 0
+    for write_offset, item_id, pack_fmt in _scan_chest_events(rom):
+        if write_offset + 4 <= len(orig_data):
+            orig_item = struct.unpack_from(pack_fmt, orig_data, write_offset)[0]
+            mod_item = struct.unpack_from(pack_fmt, data, write_offset)[0]
+            if orig_item != mod_item:
+                gba_addr = ROM_BASE + write_offset
+                chapters = _find_chapters_for_gba_addr(rom, gba_addr)
+                ch_label = ', '.join(chapters) if chapters else 'Unknown'
+                orig_name = ITEM_NAMES.get(orig_item, f'0x{orig_item:02X}')
+                mod_name = ITEM_NAMES.get(mod_item, f'0x{mod_item:02X}')
+                lines.append(f'  [{ch_label}] {orig_name} -> {mod_name}')
+                chest_changed += 1
+    if chest_changed == 0:
         lines.append('  (none)')
     lines.append('')
 
