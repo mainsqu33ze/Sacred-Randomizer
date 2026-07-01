@@ -44,6 +44,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 | Section | What it does |
 | --- | --- |
 | `class_randomization` | Shuffles classes among playable characters |
+| `recruitment_randomization` | Shuffles which character is recruited in each story slot |
 | `growth_randomization` | Randomizes stat growth rates (character & class) |
 | `base_stat_randomization` | Randomizes or swaps base stats |
 | `promo_gain_sync` | Syncs promotion stat bonuses between male/female class pairs |
@@ -82,6 +83,35 @@ class_randomization:
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
+
+### recruitment_randomization
+
+Shuffles which character's identity (stats, growths, class, portrait) occupies each story recruit slot:
+
+```yaml
+recruitment_randomization:
+  enabled: false           # true = shuffle character data among playable PIDs
+  mode: pre                # 'pre' or 'post' — when to swap relative to class/stats
+  preserve_tier: true      # promote↔promoted only; prevent prepromotes in early slots
+```
+
+When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unused PID 27) are permuted. Each PID slot keeps its own `id` self-reference byte, so the game still knows which characters are the main lords (PID 1 = Eirika, PID 15 = Ephraim) for game-over and story purposes — but all other data follows the swapped block.
+
+**`mode: pre`** (default): swap first, then randomize classes/stats/growths into the swapped arrangement. Each PID slot gets fresh randomized stats based on whoever ended up there. Eirika's slot gets the swapped-in character's personality and appearance but with stats appropriate to the slot's position in the story.
+
+**`mode: post`**: randomize classes/stats/growths first, then swap. Each character carries their pre-rolled class and stats to their new PID slot. Useful if you want a specific set of stats (e.g., those from the seed) to follow the character rather than the slot.
+
+**`preserve_tier: true`** (default): when swapping, characters are grouped by class tier (trainee, unpromoted, promoted) so a prepromote like Seth (promoted) only swaps with other promoted units. This prevents Seth's stats from appearing in an early-game unpromoted slot like Franz's. Disable (`false`) for full chaos — any character can end up in any slot.
+
+**Palette lockstep:** PaletteClassTable and PaletteIndexTable entries (7 bytes each per PID) are swapped alongside the CharacterData so each character's custom palette colours follow their portrait and data to the new PID slot.
+
+**Trainee promotion table:** After a recruitment shuffle, the 3-entry trainee table at `0x08207044` (Ross, Amelia, Ewan) is remapped to whichever PID slots now hold trainee classes. Entries for PIDs that no longer have a trainee class are zeroed out.
+
+**Unconditional guarantees (always active regardless of settings):**
+- **PID 1 (Eirika), PID 15 (Ephraim):** These are the main lords — game over if either falls in battle. They are **not** restricted to lord classes and can be assigned any class after the swap.
+- **Trainee enforcement:** PIDs 7, 18, 24 (Ross, Amelia, Ewan) always have trainee classes regardless of what data swaps into them.
+- **Unpromoted enforcement:** 18 story-critical PID slots (1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31) are always kept as unpromoted classes to preserve early-game balance.
+- **Cutscene weapon guarantee:** PID 2 (Seth) is always given an equippable combat weapon for chapters 0 and 4 to prevent cutscene crashes. PID 13 (Artur) also gets the guarantee for chapter 4.
 
 ### growth_randomization
 
@@ -181,6 +211,8 @@ item_randomization:
 **Weapon rank transfer:** When a character's class changes, weapon ranks are adjusted to match the new class. Ranks for weapon types the new class can't use are zeroed out. For supported types, the character keeps whichever is higher — their existing rank or the class's base. Additionally, if the character had their highest rank in a type they can no longer use, that rank is transferred to their weakest supported type, so Eirika's S-rank swords aren't wasted when she becomes a Mage.
 
 **Prf weapon type fix:** When Eirika or Ephraim is randomized to a new class, their personal weapons (Rapier `0x09` / Sieglinde `0x85` for Eirika; Reginleif `0x78` / Siegmund `0x92` for Ephraim) get their `weapon_type` byte updated to a type their new class can wield. The Ability 4 byte (offset `0x21`) is set to `0x0A` (Eirika lock) or `0x14` (Ephraim lock), making weapons check PID instead of class. Lord-class attribute lock bits from the class data are also copied into the character's PersonalInfo attributes (offset `0x28`) — Eirika gets bits 17+28 (`0x10020000`), Ephraim gets bit 29 (`0x20000000`) — so the equipped character always passes the item lock check regardless of their current class. This ensures lords can always use their signature weapons even after class randomization.
+
+**Cutscene combat guarantee (always on):** After all randomization completes, Seth (PID 2) and Artur (PID 13) are checked for an equippable combat weapon (sword/lance/axe/bow/anima/light/dark) in their chapter 0 and chapter 4 unit placement arrays. If only staves or empty slots are found, a combat weapon is forced into the first available slot. This includes the hardcoded prologue cutscene battle array at `0x088B3F68` which is not discoverable via normal chapter data scanning. Staff (type 4) is explicitly excluded from the weapon selection to prevent replacing a staff with another staff. No config toggle — always active to prevent cutscene softlocks.
 
 ### weapon_randomization
 
@@ -316,6 +348,7 @@ Classes are grouped by **movement category** (flyer / water / mountain / foot) s
 - Manakete, Bard, Dancer, Fleet, Phantom, Demon King, and JIDs 0x67–0x7B never appear in enemy pools.
 - Final boss (PID 0xBE) is always excluded regardless of `include_bosses`.
 - Lords and trainees are excluded.
+- **Staves-only classes** (Cleric, Priest, Troubadour) are automatically filtered out — they can't deal damage.
 - Set `include_monsters: true` to allow monster classes in the pool. Set `randomize_monster_classes: true` to also randomize enemies that start as monsters.
 
 **Boss buffs** apply when `include_bosses: true` and a boss PID is in scope. Growth and base stats can be scaled by a multiplier (`1.5`), randomly buffed per-stat (`random_buff`), or fully rerolled with gaussian (`random`). `max_weapon_ranks: true` sets weapon experience to 251 (S-rank) for every weapon type the boss's class can use, and zeroes out weapon types the class can't use — so the boss only keeps ranks relevant to their randomized class.
@@ -333,6 +366,11 @@ class_randomization:
   omit_classes: []
   include_soldier: false
   palette_mapping: true
+
+recruitment_randomization:
+  enabled: false
+  mode: pre
+  preserve_tier: true
 
 growth_randomization:
   character: false

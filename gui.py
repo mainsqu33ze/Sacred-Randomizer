@@ -90,11 +90,17 @@ class FE8RandomizerGUI(tk.Tk):
 
         # Weapon Effects Weights
         self.fx_enabled = tk.BooleanVar(value=False)
+        self.fx_enabled_pct = tk.IntVar(value=30)
         self.fx_poison = tk.IntVar(value=2)
         self.fx_nosferatu = tk.IntVar(value=3)
         self.fx_eclipse = tk.IntVar(value=1)
         self.fx_devil = tk.IntVar(value=5)
         self.fx_stone = tk.IntVar(value=1)
+
+        # Recruitment Settings
+        self.recruit_enabled = tk.BooleanVar(value=False)
+        self.recruit_mode = tk.StringVar(value="pre")
+        self.recruit_preserve_tier = tk.BooleanVar(value=True)
 
         # Enemy Settings
         self.enemy_enabled = tk.BooleanVar(value=True)
@@ -132,6 +138,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
 
         self._build_classes_tab()
+        self._build_recruitment_tab()
         self._build_stats_tab()
         self._build_items_tab()
         self._build_weapons_tab()
@@ -262,6 +269,26 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Button(btn_frame, text="OK", command=_ok).pack(side=tk.RIGHT, padx=4)
         ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side=tk.RIGHT, padx=4)
 
+    def _build_recruitment_tab(self):
+        tab = self._scrollable_tab("Recruitment")
+
+        card = ttk.LabelFrame(tab, text=" Recruitment Order Randomization ", padding=10)
+        card.pack(fill=tk.X, pady=4)
+
+        ttk.Checkbutton(card, text="Randomize recruitment order (shuffle character identities)", variable=self.recruit_enabled).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=4)
+        ttk.Label(card, text="Shuffles CharacterData blocks among playable PIDs so the\ncharacter you recruit at each story point changes.", foreground="#555", font=("Segoe UI", 9)).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
+
+        ttk.Label(card, text="Mode:").grid(row=2, column=0, sticky=tk.W, pady=4)
+        mode_frame = ttk.Frame(card)
+        mode_frame.grid(row=2, column=1, sticky=tk.W, padx=6)
+        ttk.Combobox(mode_frame, textvariable=self.recruit_mode, values=["pre", "post"], state="readonly", width=8).pack(side=tk.LEFT)
+        ttk.Label(mode_frame, text="pre = swap then randomize; post = randomize then swap", foreground="#555", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=8)
+
+        ttk.Checkbutton(card, text="Preserve class tiers during swap (promoted ↔ promoted only)", variable=self.recruit_preserve_tier).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=0, pady=4)
+        ttk.Label(card, text="When swapping recruitment data, a promoted character (e.g. Seth) only\nswaps with other promoted slots. Safer for game balance — prevents\nprepromotes in early-game unpromoted slots. Disable for full chaos.", foreground="#555", font=("Segoe UI", 9)).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
+
+        ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan always stay as trainees. Seth gets a combat weapon\nguarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
+
     def _build_stats_tab(self):
         tab = self._scrollable_tab("Stats & Growths")
 
@@ -372,6 +399,8 @@ class FE8RandomizerGUI(tk.Tk):
         fx.pack(fill=tk.X, pady=8)
 
         ttk.Checkbutton(fx, text="Enable weapon effects (poison, nosferatu, etc.)", variable=self.fx_enabled).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=4)
+        ttk.Label(fx, text="% chance per weapon:").grid(row=1, column=0, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_enabled_pct, width=5).grid(row=1, column=1, padx=6, sticky=tk.W)
 
         effects = [
             ("Poison weight:", self.fx_poison),
@@ -381,8 +410,8 @@ class FE8RandomizerGUI(tk.Tk):
             ("Stone weight:", self.fx_stone),
         ]
         for i, (label, var) in enumerate(effects):
-            ttk.Label(fx, text=label).grid(row=i + 1, column=0, sticky=tk.W, pady=2)
-            ttk.Spinbox(fx, from_=0, to=100, textvariable=var, width=5).grid(row=i + 1, column=1, padx=6, sticky=tk.W)
+            ttk.Label(fx, text=label).grid(row=i + 2, column=0, sticky=tk.W, pady=2)
+            ttk.Spinbox(fx, from_=0, to=100, textvariable=var, width=5).grid(row=i + 2, column=1, padx=6, sticky=tk.W)
 
     def _build_enemies_tab(self):
         tab = self._scrollable_tab("Enemies & Combat")
@@ -526,12 +555,17 @@ class FE8RandomizerGUI(tk.Tk):
                 "max_crit": self.wpn_max_crit.get(),
             },
             "weapon_effects": {
-                "enabled": 30 if self.fx_enabled.get() else False,
+                "enabled": self.fx_enabled_pct.get() if self.fx_enabled.get() else False,
                 "poison": self.fx_poison.get(),
                 "nosferatu": self.fx_nosferatu.get(),
                 "eclipse": self.fx_eclipse.get(),
                 "devil": self.fx_devil.get(),
                 "stone": self.fx_stone.get(),
+            },
+            "recruitment_randomization": {
+                "enabled": self.recruit_enabled.get(),
+                "mode": self.recruit_mode.get(),
+                "preserve_tier": self.recruit_preserve_tier.get(),
             },
             "affinity_randomization": {
                 "enabled": self.affinity_randomization.get(),
@@ -663,12 +697,23 @@ class FE8RandomizerGUI(tk.Tk):
             self.wpn_max_crit.set(w.get("max_crit", 30))
 
             fx = d.get("weapon_effects", {})
-            self.fx_enabled.set(_bool(fx.get("enabled")))
+            fx_enabled_val = fx.get("enabled", False)
+            if isinstance(fx_enabled_val, (int, float)) and fx_enabled_val:
+                self.fx_enabled.set(True)
+                self.fx_enabled_pct.set(int(fx_enabled_val))
+            else:
+                self.fx_enabled.set(_bool(fx_enabled_val))
+                self.fx_enabled_pct.set(30)
             self.fx_poison.set(fx.get("poison", 2))
             self.fx_nosferatu.set(fx.get("nosferatu", 3))
             self.fx_eclipse.set(fx.get("eclipse", 1))
             self.fx_devil.set(fx.get("devil", 5))
             self.fx_stone.set(fx.get("stone", 1))
+
+            rr = d.get("recruitment_randomization", {})
+            self.recruit_enabled.set(_bool(rr.get("enabled")))
+            self.recruit_mode.set(rr.get("mode", "pre"))
+            self.recruit_preserve_tier.set(rr.get("preserve_tier", True))
 
             af = d.get("affinity_randomization", {})
             self.affinity_randomization.set(_bool(af.get("enabled")))

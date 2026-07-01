@@ -152,8 +152,8 @@ def _update_trainee_promotion_table(rom, modified_pids):
     for Ross (PID 7), Amelia (PID 18), and Ewan (PID 24).
     After class randomization, the class byte must match each character's
     new class or the game's auto-promotion check won't trigger.
-    If a trainee became a Manakete, the entry is zeroed out instead since
-    Manaketes have no promotion path.
+    If a trainee became a Manakete or a non-trainee class, the entry is
+    zeroed out instead (no promotion path or no longer a trainee).
     """
     off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
     patched = 0
@@ -164,7 +164,7 @@ def _update_trainee_promotion_table(rom, modified_pids):
             continue
         cd = CharacterData(rom, pid)
         new_class = cd.jidDefault
-        if new_class in MANAKETE_JIDS:
+        if new_class in MANAKETE_JIDS or new_class not in TRAINEE_JIDS:
             if not all(rom.data[entry_off + j] == 0 for j in range(4)):
                 for j in range(4):
                     rom.data[entry_off + j] = 0
@@ -173,6 +173,248 @@ def _update_trainee_promotion_table(rom, modified_pids):
             rom.data[entry_off + 2] = new_class
             patched += 1
     return patched
+
+
+def _remap_trainee_table(rom):
+    """Rebuild trainee promotion table PIDs based on which characters have trainee classes.
+
+    After recruitment order randomization, the three trainee characters may no longer
+    be at PIDs 7, 18, 24. This function scans all playable PIDs for characters with
+    trainee classes (Journeyman, Recruit, Pupil) and updates the table to point at
+    whichever PIDs actually hold those classes. Unused entries are zeroed.
+    """
+    off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
+    trainee_pids = []
+    for pid in PLAYABLE_PLAYABLE_PIDS:
+        cd = CharacterData(rom, pid)
+        if cd.jidDefault in TRAINEE_JIDS:
+            trainee_pids.append(pid)
+    patched = 0
+    for i in range(TRAINEE_PROMO_COUNT):
+        entry_off = off + i * TRAINEE_PROMO_ENTRY_SIZE
+        if i < len(trainee_pids):
+            pid = trainee_pids[i]
+            cd = CharacterData(rom, pid)
+            if rom.data[entry_off] != pid or rom.data[entry_off + 2] != cd.jidDefault:
+                rom.data[entry_off] = pid
+                rom.data[entry_off + 1] = 10
+                rom.data[entry_off + 2] = cd.jidDefault
+                rom.data[entry_off + 3] = 0
+                patched += 1
+        else:
+            if not all(rom.data[entry_off + j] == 0 for j in range(4)):
+                for j in range(4):
+                    rom.data[entry_off + j] = 0
+                patched += 1
+    return patched
+
+
+def randomize_recruitment_order(rom, config, preserve_tier=True):
+    """Randomize recruitment order by swapping CharacterData among playable PIDs.
+
+    Shuffles CharacterData (stats, class, growths, portrait, name text ID, etc.)
+    among the 33 playable character PIDs (1-34 excluding unused PID 27). After
+    this, recruiting the unit at a given story slot yields a different character's
+    data.
+
+    When preserve_tier=True, swaps are grouped by class tier (trainee/unpromoted/
+    promoted) so e.g. Seth (promoted) only swaps with other promoted units,
+    preventing a prepromote from appearing in early-game unpromoted slots.
+
+    PaletteClassTable and PaletteIndexTable entries are swapped in lockstep so
+    each PID keeps the palette that matches the character whose data ended up there.
+    The trainee promotion table is remapped to point at whichever PIDs now have
+    trainee classes.
+    """
+    import struct
+    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
+
+    rules = config.get('recruitment_randomization', {})
+    if not rules.get('enabled', False):
+        return set()
+
+    pids = sorted(PLAYABLE_PLAYABLE_PIDS)
+    n = len(pids)
+
+    # Build permutation
+    if preserve_tier:
+        _tier_map = {pid: _get_tier(rom, pid) for pid in pids}
+        tier_groups = {0: [], 1: [], 2: []}
+        for pid in pids:
+            tier_groups[_tier_map[pid]].append(pid)
+        # Shuffle each tier group within its own positions
+        shuffled = list(pids)
+        for t in sorted(tier_groups):
+            group = tier_groups[t]
+            positions = [i for i, pid in enumerate(shuffled) if _tier_map[pid] == t]
+            shuffled_group = list(group)
+            random.shuffle(shuffled_group)
+            for pos, new_pid in zip(positions, shuffled_group):
+                shuffled[pos] = new_pid
+    else:
+        shuffled = list(pids)
+        random.shuffle(shuffled)
+
+    # Snapshot all CharacterData blocks (PINFO_SIZE = 0x34 = 52 bytes)
+    char_data = {}
+    for pid in pids:
+        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        char_data[pid] = bytearray(rom.data[off:off + PINFO_SIZE])
+
+    # Write shuffled data; preserve byte 4 (PID / self-index field)
+    for src_pid, dst_pid in zip(pids, shuffled):
+        dst_off = rom_offset(CHARACTER_TABLE_ADDR) + (dst_pid - 1) * PINFO_SIZE
+        for j in range(PINFO_SIZE):
+            if j == 4:
+                continue
+            rom.data[dst_off + j] = char_data[src_pid][j]
+        rom.data[dst_off + 4] = dst_pid
+
+    # Swap PaletteClassTable (7 bytes per PID)
+    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_cls_off = pal_cls_gba - ROM_BASE
+    pal_cls_data = {}
+    for pid in pids:
+        off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        pal_cls_data[pid] = bytearray(rom.data[off:off + PALETTE_ENTRY_SIZE])
+    for src_pid, dst_pid in zip(pids, shuffled):
+        dst_off = pal_cls_off + (dst_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_cls_data[src_pid]
+
+    # Swap PaletteIndexTable (7 bytes per PID)
+    pal_idx_gba = struct.unpack('<I', rom.data[PALETTE_INDEX_TABLE_PTR_OFF:PALETTE_INDEX_TABLE_PTR_OFF + 4])[0]
+    pal_idx_off = pal_idx_gba - ROM_BASE
+    pal_idx_data = {}
+    for pid in pids:
+        off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        pal_idx_data[pid] = bytearray(rom.data[off:off + PALETTE_ENTRY_SIZE])
+    for src_pid, dst_pid in zip(pids, shuffled):
+        dst_off = pal_idx_off + (dst_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[src_pid]
+
+    # Remap trainee promotion table to point at PIDs that now have trainee classes
+    remapped = _remap_trainee_table(rom)
+    if remapped:
+        print(f"Remapped {remapped} trainee promotion table entr(y/ies) after recruitment shuffle")
+
+    label = " (tier-preserving)" if preserve_tier else ""
+    print(f"Randomized recruitment order for {n} units{label}")
+    return set(pids)
+
+
+def _get_tier(rom, pid):
+    """Return tier for a PID: 0=trainee, 1=unpromoted, 2=promoted."""
+    cd = CharacterData(rom, pid)
+    jid = cd.jidDefault
+    if jid in TRAINEE_JIDS:
+        return 0
+    try:
+        jd = ClassData(rom, jid)
+        if jd.attributes & 0x100:
+            return 2
+    except Exception:
+        pass
+    return 1
+
+
+def _sync_shared_pid_classes(rom):
+    """Sync class across PIDs representing the same character.
+    
+    Orson: PID 42 (player, ch5x) and PID 0x6D (boss, ch16).
+    After class randomization, the boss version matches the player version.
+    """
+    sync_groups = [(42, 0x6D)]
+    for src_pid, dst_pid in sync_groups:
+        try:
+            cd_src = CharacterData(rom, src_pid)
+            cd_dst = CharacterData(rom, dst_pid)
+            if cd_src.jidDefault == 0 or cd_dst.jidDefault == 0:
+                continue
+            if cd_src.jidDefault != cd_dst.jidDefault:
+                cd_dst.jidDefault = cd_src.jidDefault
+                cd_dst.write(rom)
+                print(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
+        except Exception:
+            pass
+
+
+def _enforce_pid_tiers(rom, config):
+    """Enforce class tier constraints on story-critical PID slots.
+
+    After all class randomization, certain PID slots must always hold specific
+    class tiers to prevent early-game balance issues. Seth (PID 2) and Natasha
+    (PID 13) must have weapon-usable classes (not staves-only) for combat
+    cutscenes. Ross/Amelia/Ewan (PIDs 7/18/24) must be trainees for the
+    auto-promotion check.
+
+    Uses the same class pools as randomize_class (STANDARD_JIDS, omit_classes,
+    include_soldier, etc.).
+    """
+    unprompted_pids = {1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31}
+    trainee_pids = {7, 18, 24}
+    weapon_req_pids = {2, 13}
+
+    from fe8rom import JID
+
+    promoted_jids, unpromoted_jids = _split_class_pool(rom)
+    omit_jids = _parse_omit_classes(config)
+    include_soldier = config.get('class_randomization', {}).get('include_soldier', False)
+
+    promoted_jids -= omit_jids
+    unpromoted_jids -= omit_jids
+    if not include_soldier:
+        unpromoted_jids.discard(JID.SOLDIER)
+
+    unpromoted_list = sorted(unpromoted_jids)
+    trainee_list = sorted(TRAINEE_JIDS - omit_jids)
+
+    def _has_weapon(jid):
+        try:
+            jd = ClassData(rom, jid)
+            return any(jd.baseWexp[t] > 0 for t in range(8) if t != 4)
+        except Exception:
+            return False
+
+    fixed = set()
+    for pid in unprompted_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if jid in TRAINEE_JIDS or jid in promoted_jids:
+            pool = [j for j in unpromoted_list if not (pid in weapon_req_pids and not _has_weapon(j))]
+            new_jid = random.choice(pool) if pool else random.choice(unpromoted_list)
+            cd.jidDefault = new_jid
+            _adjust_weapon_ranks(cd, new_jid, rom)
+            cd.write(rom)
+            fixed.add(pid)
+
+    for pid in trainee_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if jid not in TRAINEE_JIDS:
+            if not trainee_list:
+                continue
+            new_jid = random.choice(trainee_list)
+            cd.jidDefault = new_jid
+            _adjust_weapon_ranks(cd, new_jid, rom)
+            cd.write(rom)
+            fixed.add(pid)
+
+    for pid in weapon_req_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if not _has_weapon(jid):
+            if pid in unprompted_pids:
+                pool = [j for j in unpromoted_list if _has_weapon(j)]
+            else:
+                pool = [j for j in unpromoted_list + list(promoted_jids) if _has_weapon(j)]
+            if pool:
+                new_jid = random.choice(pool)
+                cd.jidDefault = new_jid
+                _adjust_weapon_ranks(cd, new_jid, rom)
+                cd.write(rom)
+                fixed.add(pid)
+
+    return fixed
 
 
 def _adjust_weapon_ranks(cd, new_jid, rom):
@@ -1076,6 +1318,119 @@ def _fix_prf_weapon_types(rom, modified_pids):
                 rom.data[off + 7] = new_type
 
 
+def _ensure_chapter_combat_weapons(rom, config):
+    """Post-processing: ensure Seth (PID 2, ch0/ch4) and Natasha (PID 13, ch4)
+    have an equippable combat weapon (sword/lance/axe/bow/anima/light/dark) in
+    every UD array entry for those chapters.
+
+    Runs unconditionally at the very end to prevent cutscene crashes — Seth
+    attacks in the ch0 opening cutscene, and Natasha is attacked in the ch4
+    opening cutscene. If a unit has only staves or empty slots, a combat weapon
+    is forced into the first replaceable slot.
+    """
+    import struct
+    combat_types = {0, 1, 2, 3, 5, 6, 7}  # sword, lance, axe, bow, anima, light, dark
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    weapon_pools = build_weapon_pools(rom, include_ballista)
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+    fixed = 0
+
+    # Prologue cutscene combat uses a hardcoded UD array not found in chapter event data.
+    # Patch it directly so Seth has a weapon for the opening cutscene battle animation.
+    CUTSCENE_UD_ARRAY = 0x088B3F68
+    cutscene_off = CUTSCENE_UD_ARRAY - ROM_BASE
+    fixed += _patch_ud_combat_weapons(rom, cutscene_off, {2}, weapon_pools, combat_types)
+
+    # chapter -> set of PIDs to enforce
+    targets = {0: {2}, 4: {2, 13}}
+    seen_arrays = set()
+
+    for ch, pids in targets.items():
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        event_data_off = event_data_ptr - ROM_BASE
+
+        gmap_event_id = data[ch_off + 0x75]
+        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
+        gmap_off = gmap_ptr - ROM_BASE
+
+        # Direct UD pointers in event data
+        for off in range(0, 0x400, 4):
+            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            if val in seen_arrays:
+                continue
+            ud_offset = val - ROM_BASE
+            if _ud_array_at_lenient(rom, ud_offset) > 0:
+                seen_arrays.add(val)
+                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
+
+        # GMap UD arrays
+        for off in range(0, 0x200, 4):
+            val = struct.unpack_from('<I', data, gmap_off + off)[0]
+            if val in seen_arrays:
+                continue
+            ud_offset = val - ROM_BASE
+            if _ud_array_at_lenient(rom, ud_offset) > 0:
+                seen_arrays.add(val)
+                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
+
+    return fixed
+
+
+def _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types):
+    """For each UD entry matching a target PID, ensure at least one equippable
+    combat weapon. Returns count of entries fixed."""
+    data = rom.data
+    fixed = 0
+    arr_pos = ud_offset
+
+    while arr_pos + UNIT_DEF_SIZE <= len(data):
+        chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+        if all(b == 0 for b in chunk):
+            break
+        char_idx = chunk[0]
+        if char_idx not in pids:
+            arr_pos += UNIT_DEF_SIZE
+            continue
+
+        cd = CharacterData(rom, char_idx)
+        items = list(chunk[12:16])
+        has_combat = False
+        replace_slots = []
+
+        for slot_idx in range(4):
+            item_id = items[slot_idx]
+            if item_id == 0:
+                replace_slots.append(slot_idx)
+                continue
+            idd = ItemData(rom, item_id)
+            if idd.is_weapon():
+                if idd.weapon_type in combat_types and cd.baseWexp[idd.weapon_type] > 0:
+                    has_combat = True
+                    break
+                # Staff or unwieldable weapon — candidate for replacement
+                replace_slots.append(slot_idx)
+
+        if not has_combat and replace_slots:
+            # Zero out staff proficiency so _pick_weapon_for_type doesn't return a staff
+            combat_ranks = [cd.baseWexp[t] if t != 4 else 0 for t in range(8)]
+            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            if new_id is None:
+                # Fall back to any non-staff type even if not proficient
+                combat_ranks = [1 if t != 4 else 0 for t in range(8)]
+                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            if new_id is not None:
+                data[arr_pos + 12 + replace_slots[0]] = new_id
+                fixed += 1
+
+        arr_pos += UNIT_DEF_SIZE
+
+    return fixed
+
+
 def randomize_unit_items(rom, config, modified_pids):
     """Assign random weapons matching each unit's new class in all UnitDefinition arrays."""
     include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
@@ -1562,6 +1917,18 @@ def randomize_enemies(rom, config):
 
     enemy_jids -= ENEMY_EXCLUDED_JIDS
     enemy_jids -= omit_jids
+
+    # Filter out staves-only classes (Cleric, Priest, Troubadour) — they can't deal damage
+    staves_only = set()
+    for jid in enemy_jids:
+        try:
+            jd = ClassData(rom, jid)
+            has_non_staff = any(jd.baseWexp[t] > 0 for t in range(8) if t != 4)
+            if not has_non_staff:
+                staves_only.add(jid)
+        except Exception:
+            pass
+    enemy_jids -= staves_only
 
     # Split by tier
     promoted_pool = set()
@@ -2300,15 +2667,37 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     # Snapshot original data for report generation
     original_data = bytearray(rom.data)
 
-    # Snapshot original class JIDs before any randomization (used by palette mapping)
+    # Determine recruitment mode (pre = swap first, post = swap after class/stats)
+    recruit_rules = config.get('recruitment_randomization', {})
+    recruit_enabled = recruit_rules.get('enabled', False)
+    recruit_mode = recruit_rules.get('mode', 'pre')
+    preserve_tier = recruit_rules.get('preserve_tier', True)
+
+    modified_pids = set()
+
+    if recruit_enabled and recruit_mode == 'pre':
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
+
+    # Snapshot original class JIDs before class randomization (used by palette mapping)
     original_jids = {pid: CharacterData(rom, pid).jidDefault for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
 
-    modified_pids = randomize_class(rom, config)
-    trainee_patched = _update_trainee_promotion_table(rom, modified_pids)
+    class_pids = randomize_class(rom, config)
+    modified_pids |= class_pids
+    trainee_patched = _update_trainee_promotion_table(rom, class_pids)
     if trainee_patched:
         print(f"Updated {trainee_patched} trainee promotion table entr(y/ies)")
     randomize_growths(rom, config)
     randomize_base_stats(rom, config)
+
+    if recruit_enabled and recruit_mode == 'post':
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
+
+    # Enforce class tier constraints on story-critical PID slots
+    enforced_pids = _enforce_pid_tiers(rom, config)
+    if enforced_pids:
+        modified_pids |= enforced_pids
+        print(f"Enforced class tier constraints for {len(enforced_pids)} unit(s)")
+
     synchronize_promotion_gains(rom)
     randomize_affinity(rom, config)
     randomize_weapon_stats(rom, config)
@@ -2325,6 +2714,9 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     enemy_patched = randomize_enemies(rom, config)
     if enemy_patched:
         print(f"Randomized {enemy_patched} generic enemy unit(s)")
+
+    # Sync shared-PID characters (e.g. Orson) after ALL class/enemy randomization
+    _sync_shared_pid_classes(rom)
 
     # Update palette class table so characters keep custom palettes after class changes
     class_rules = config.get('class_randomization', {})
@@ -2366,6 +2758,11 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     if loot_count:
         mode_label = config.get('loot_randomization', {}).get('mode', 'random')
         print(f"Randomized {loot_count} loot event(s) ({mode_label} mode)")
+
+    # Post-processing: guarantee Seth (ch0/ch4) and Natasha (ch4) have combat weapons
+    ch_fixed = _ensure_chapter_combat_weapons(rom, config)
+    if ch_fixed:
+        print(f"Fixed combat weapons for {ch_fixed} cutscene-critical unit(s) in ch0/ch4")
 
     resolved_seed = seed if seed is not None else config.get('seed', None)
     _write_report(original_data, rom, config, resolved_seed, output_path)
