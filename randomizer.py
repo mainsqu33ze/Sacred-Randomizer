@@ -137,6 +137,43 @@ TRAINEE_JIDS = {JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT}
 
 MANAKETE_JIDS = {JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH}
 
+# Trainee auto-promotion table (GBA addr): 3 entries x 4 bytes = [PID, level, class, pad].
+# The game uses this to auto-promote trainees when they reach level 10.
+TRAINEE_PROMO_TABLE_ADDR = 0x08207044
+TRAINEE_PROMO_ENTRY_SIZE = 4
+TRAINEE_PROMO_COUNT = 3
+
+
+def _update_trainee_promotion_table(rom, modified_pids):
+    """Update trainee auto-promotion table with randomized classes.
+
+    The table at 0x08207044 has 3 entries (4 bytes each):
+      [PID, level_required, class, padding]
+    for Ross (PID 7), Amelia (PID 18), and Ewan (PID 24).
+    After class randomization, the class byte must match each character's
+    new class or the game's auto-promotion check won't trigger.
+    If a trainee became a Manakete, the entry is zeroed out instead since
+    Manaketes have no promotion path.
+    """
+    off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
+    patched = 0
+    for i in range(TRAINEE_PROMO_COUNT):
+        entry_off = off + i * TRAINEE_PROMO_ENTRY_SIZE
+        pid = rom.data[entry_off]
+        if pid not in modified_pids:
+            continue
+        cd = CharacterData(rom, pid)
+        new_class = cd.jidDefault
+        if new_class in MANAKETE_JIDS:
+            if not all(rom.data[entry_off + j] == 0 for j in range(4)):
+                for j in range(4):
+                    rom.data[entry_off + j] = 0
+                patched += 1
+        elif rom.data[entry_off + 2] != new_class:
+            rom.data[entry_off + 2] = new_class
+            patched += 1
+    return patched
+
 
 def _adjust_weapon_ranks(cd, new_jid, rom):
     """Zero weapon ranks for types the new class can't use; use class base as floor.
@@ -2267,6 +2304,9 @@ def apply_config(rom_path, config, seed=None, output_path=None):
     original_jids = {pid: CharacterData(rom, pid).jidDefault for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
 
     modified_pids = randomize_class(rom, config)
+    trainee_patched = _update_trainee_promotion_table(rom, modified_pids)
+    if trainee_patched:
+        print(f"Updated {trainee_patched} trainee promotion table entr(y/ies)")
     randomize_growths(rom, config)
     randomize_base_stats(rom, config)
     synchronize_promotion_gains(rom)
