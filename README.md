@@ -12,11 +12,14 @@ Randomizes **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs.
 
 ```
 python fe8_randomizer.py ROM.GBA -c config.yaml -o randomized.gba
-python fe8_randomizer.py ROM.GBA --seed 42          # override config seed
-python fe8_randomizer.py ROM.GBA --dump > ref.yaml  # print all defaults
+python fe8_randomizer.py ROM.GBA -s 42              # override config seed (--seed or -s)
+python fe8_randomizer.py ROM.GBA -v                  # show detailed progress messages
+python fe8_randomizer.py ROM.GBA --dump > ref.yaml   # print all defaults
 ```
 
-Without `-o`, output goes to `ROM_randomized.gba`.
+Without `-o`, output goes to `ROM_randomized.gba`. Default output is quiet (only the final ROM path); pass `-v` for step-by-step progress.
+
+A `.txt` report is generated alongside the ROM (same name, `.txt` extension) with full details of class changes, weapon effects, event item changes, and per-unit growth rate totals with a summary range and average.
 
 ## GUI
 

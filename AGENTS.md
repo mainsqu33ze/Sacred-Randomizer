@@ -5,15 +5,17 @@
 pip install -r requirements.txt
 python fe8_randomizer.py ROM.GBA -c config.yaml -o output.gba
 python fe8_randomizer.py ROM.GBA --dump          # prints default config to stdout
-python fe8_randomizer.py ROM.GBA --seed 42        # overrides config seed
+python fe8_randomizer.py ROM.GBA -s 42           # overrides config seed (--seed or -s)
+python fe8_randomizer.py ROM.GBA -v              # show detailed progress messages
 ```
-Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--seed`. `save()` calls `fix_checksum()` automatically. No test suite — verify manually or run test configs: `incremental_test.yaml` (all features) or `test_config.yaml` (dev baseline).
+Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--seed`. `save()` calls `fix_checksum()` automatically. No test suite — verify manually or run test configs: `incremental_test.yaml` (all features) or `test_config.yaml` (dev baseline). Default output is quiet (only final path printed); pass `-v` / `--verbose` for step-by-step progress.
 
 ## Entrypoints & structure
 - `fe8_randomizer.py` — CLI entrypoint (argparse)
 - `gui.py` — Tkinter GUI (standalone, `python gui.py`; unused by CLI path)
 - `randomizer.py` — `apply_config()` orchestrates in order: **recruitment** → class → growths → base stats → **promo gain sync** → affinity → weapon stats → weapon effects → promotion items → unit defs → **prf weapon type fix** → enemy randomize → **palette mapping** → unit items → loot → **cutscene combat fix**
-- `fe8rom.py` — ROM binary parsing: `ROM`, `CharacterData`, `ClassData`, `ItemData`, `ChapterData`, enums (`PID`, `JID`), `build_weapon_pools()`
+- `fe8rom.py` — ROM binary parsing: `ROM` (with `__slots__`), `CharacterData`, `ClassData`, `ItemData`, `ChapterData`, enums (`PID`, `JID`), `build_weapon_pools()`. Uses pre-compiled `struct.Struct` objects and type hints. Scan results (`ud_arrays`, `ch_ud_arrays`, `giveitem_events`) and `weapon_pools` are cached in `apply_config()` and passed as parameters instead of re-scanning the 16 MB ROM multiple times.
+- `randomizer.py` — `apply_config()` orchestrates in order: **recruitment** → class → growths → base stats → **promo gain sync** → affinity → weapon stats → weapon effects → promotion items → unit defs → **prf weapon type fix** → enemy randomize → **palette mapping** → unit items → loot → **cutscene combat fix**. Uses module-level `_VERBOSE` flag and `_vprint()` helper — status messages only show when `--verbose` is passed. `tqdm` progress bars (soft dependency) on enemy phase.
 - `scripts/_check_*` / `_find_*` / `_dump_*` — standalone dev diagnostics, not part of randomizer
 
 ## ROM layout constraints
@@ -60,7 +62,6 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
 ## UD array scanner gotchas
 - `_scan_ud_arrays` searches for `{0x40..0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4}` + 0x2C pattern, reads pointer at pos+4 in ROM data. Covers LOAD-event-referenced UD arrays. Uses `_ud_array_at_lenient` for validation.
 - `_scan_chapter_ud_arrays` reads UD pointers from chapter event data (direct pointers at 4-byte intervals up to 0x400 bytes) and GMap data (up to 0x200 bytes). Covers arrays FE Builder shows in its Unit Placer view.
-- `_ud_array_at` (strict): validates 20-byte entries, terminates on all-zero, returns 0 if `char_idx == 0 || > 114 || class_idx > 114 || entries > 100`. Rejects addrs >= `0x088D0000`. **Only used for debugging/exploration now** — the `char_idx > 114` check incorrectly rejects legitimate generic enemies with PID > 114 (e.g., PID 128, 130).
 - `_ud_array_at_lenient` (used by both `_scan_ud_arrays` and `_scan_chapter_ud_arrays`): allows pid > 114 (NPC/allied units embedded alongside generic enemies in chapter data arrays). Only rejects pid=0 mid-array or class_idx > 127.
 - **False positive at 0x0880210C**: 6 entries with u16 coordinate pairs. Entries 1/4 have pid=0, now correctly rejected. Writing here corrupted coordinates, causing combat animation glitches.
 - **0x08802508** (1 entry, pid=3 valid) still passes — can't filter without breaking real single-entry arrays.
