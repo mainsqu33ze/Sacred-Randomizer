@@ -76,7 +76,8 @@ class_randomization:
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
-  palette_mapping: true  # Auto-update palette class table for custom palettes
+  palette_mapping: true       # Auto-update palette class table for custom palettes
+  portrait_palettes: false    # Generate class palette from character's portrait colors
 ```
 
 `mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
@@ -86,6 +87,8 @@ class_randomization:
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
+
+`portrait_palettes: false` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data.
 
 ### recruitment_randomization
 

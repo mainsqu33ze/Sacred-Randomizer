@@ -39,6 +39,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.manakete_count = tk.IntVar(value=1)
         self.include_soldier = tk.BooleanVar(value=False)
         self.palette_mapping = tk.BooleanVar(value=True)
+        self.portrait_palettes = tk.BooleanVar(value=False)
         self.affinity_randomization = tk.BooleanVar(value=False)
         self.class_omit = tk.StringVar(value="BARD")
 
@@ -201,7 +202,8 @@ class FE8RandomizerGUI(tk.Tk):
 
         ttk.Checkbutton(card, text="Allow Soldier (no promotion path)", variable=self.include_soldier).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Checkbutton(card, text="Auto-map custom palettes to new classes", variable=self.palette_mapping).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Generate portrait-based palettes for new classes", variable=self.portrait_palettes).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=2)
 
     def _update_omit_status(self):
         omitted = [x.strip().upper() for x in self.class_omit.get().split(",") if x.strip()]
@@ -507,6 +509,7 @@ class FE8RandomizerGUI(tk.Tk):
                 "omit_classes": _omit_list(self.class_omit.get()),
                 "include_soldier": self.include_soldier.get(),
                 "palette_mapping": self.palette_mapping.get(),
+                "portrait_palettes": self.portrait_palettes.get(),
             },
             "growth_randomization": {
                 "character": _mode(self.growth_char.get(), ["shuffle", "random", "pool"]),
@@ -653,6 +656,7 @@ class FE8RandomizerGUI(tk.Tk):
             self.class_omit.set(", ".join(c.get("omit_classes", [])))
             self.include_soldier.set(_bool(c.get("include_soldier")))
             self.palette_mapping.set(c.get("palette_mapping", True))
+            self.portrait_palettes.set(c.get("portrait_palettes", False))
 
             g = d.get("growth_randomization", {})
             self.growth_char.set(_str(g.get("character")))

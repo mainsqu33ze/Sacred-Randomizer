@@ -42,3 +42,5 @@ _check_class_data_integrity.py
 _check_event_structure.py
 _check_pid37_placement.py
 *.sav
+Fire_Emblem_8_randomized.txt
+_*.py
