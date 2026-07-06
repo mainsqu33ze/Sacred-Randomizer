@@ -56,7 +56,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 | `weapon_effects` | Adds special effects (poison, nosferatu, etc.) |
 | `affinity_randomization` | Randomizes support affinities |
 | `promotion_items` | Unifies all promotion items as Master Seals |
-| `loot_randomization` | Randomizes items from GiveItem events (houses, villages, story events, recruitment) |
+| `loot_randomization` | Randomizes items from GiveItem events (houses, villages, story events, recruitment) **and** treasure chests |
 | `enemy_randomization` | Randomizes generic enemy classes & loadouts on maps |
 
 
@@ -311,11 +311,9 @@ loot_randomization:
 - `random`: each loot item is replaced with a random eligible item from the full item pool (weapons, items, stat boosters, keys, etc.). Monster-only items and story-exclusive items are excluded.
 - `shuffle`: all loot item IDs across all chapters are collected, permuted, and redistributed — the same pool of items appears, just in different locations.
 
-Scans each chapter's event data for `GiveItem` (`0x1E`) commands, which covers villages, houses, story events, and recruitment rewards.
+Scans each chapter's event data for `GiveItem` (`0x1E`) commands (villages, houses, story events, recruitment rewards) **and** type-`0x07` CHES entries in `locationBasedEvents` for treasure chests. **40 non-gold chest items** across 17 chapters/route-variants are randomized. Gold chests (items with `givenItem=0x77`, 7 total) are skipped — the gold amount is preserved.
 
-**Chest scanning is disabled:** Previous attempts to find chest items via Location Events tables (type `0x12`) produced false positives — those entries are Always Events / Map Objects, not chests. Only GiveItem events are randomized.
-
-**Excluded item IDs from loot pools (8 IDs):** `0x7D`, `0x7E`, `0x7F`, `0x80`, `0xA2`, `0xA3`, `0xA4`, `0xA5` — these are map-spawn-only deployable items not meant for loot tables. They join the existing exclusions: monster-blocked items (now includes dummy items `0x3D`, `0x44`), story-exclusive items (Rapier etc.), promotion items, ballista items (`0x35`–`0x37`, unless `include_ballista_items: true`), and dummy item `0x8A`.
+**Excluded item IDs from loot pools:** `0x7D`, `0x7E`, `0x7F`, `0x80`, `0xA2`, `0xA3`, `0xA4`, `0xA5` — these are map-spawn-only deployable items not meant for loot tables. They join the existing exclusions: monster-blocked items (now includes dummy items `0x3D`, `0x44`), story-exclusive items (Rapier etc.), promotion items, ballista items (`0x35`–`0x37`, unless `include_ballista_items: true`), and dummy item `0x8A`.
 
 ### enemy_randomization
 
