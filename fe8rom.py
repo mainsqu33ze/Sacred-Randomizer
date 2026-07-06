@@ -20,13 +20,13 @@ class PID(IntEnum):
     GARCIA = 10
     INNES = 11
     LUTE = 12
-    NATASHA = 13
+    ARTUR = 13
     CORMAG = 14
     EPHRAIM = 15
     FORDE = 16
     KYLE = 17
     AMELIA = 18
-    ARTUR = 19
+    NATASHA = 19
     GERIK = 20
     TETHYS = 21
     MARISA = 22

@@ -409,44 +409,51 @@ def _scan_giveitem_events(data: bytearray, rom_size: int) -> List[Tuple[int, int
     return results
 
 
-def _scan_chest_events(rom: ROM) -> List[Tuple[int, int, str]]:
+def _scan_chest_items(rom: ROM) -> List[Tuple[int, int, str]]:
+    """Scan section[2] (locationBasedEvents) of each chapter for type-0x07
+    CHES entries with cmdId=0x14 (TILE_COMMAND_CHEST). Returns
+    (write_offset, item_id, '<H') for each non-gold chest item."""
     data = rom.data
-    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
     seen = set()
     results = []
 
     for ch in range(35):
         ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
         map_event_data_id = data[ch_off + 0x74]
-        event_data_ptr = _U32.unpack_from(data, asset_off + map_event_data_id * 4)[0]
+        if map_event_data_id == 0:
+            continue
+        event_data_ptr = _U32.unpack_from(data, (CHAPTER_ASSET_TABLE - ROM_BASE) + map_event_data_id * 4)[0]
         if event_data_ptr == 0:
             continue
         event_data_off = event_data_ptr - ROM_BASE
 
-        for sec_idx in (2, 6):
-            ptr = _U32.unpack_from(data, event_data_off + sec_idx * 4)[0]
-            if ptr == 0:
-                continue
-            off = ptr - ROM_BASE
-            if off < 0 or off + 12 > len(data):
-                continue
+        # Read section[2] = locationBasedEvents
+        sec_ptr = _U32.unpack_from(data, event_data_off + 8)[0]
+        if sec_ptr == 0:
+            continue
+        off = sec_ptr - ROM_BASE
+        if off < 0 or off + 12 > len(data):
+            continue
 
-            entry_idx = 0
-            while off + (entry_idx + 1) * 12 <= len(data):
-                raw = data[off + entry_idx * 12 : off + entry_idx * 12 + 12]
-                if all(b == 0 for b in raw):
-                    break
-                if raw[1] != 0x12:
-                    entry_idx += 1
-                    continue
-                item_val = _U16.unpack_from(raw, 4)[0]
-                script_ptr = _U32.unpack_from(raw, 8)[0]
-                if 0 < item_val < 0xC0 and 0x08000000 <= script_ptr <= 0x08FFFFFF:
-                    write_off = off + entry_idx * 12 + 4
+        entry_idx = 0
+        while off + (entry_idx + 1) * 12 <= len(data):
+            entry_off = off + entry_idx * 12
+            raw = data[entry_off : entry_off + 12]
+            if all(b == 0 for b in raw):
+                break
+            # type-0x07 = EvCheck07_CHES
+            if raw[0] == 0x07:
+                given_item = _U16.unpack_from(raw, 4)[0]
+                x = raw[8]
+                y = raw[9]
+                cmd_id = _U16.unpack_from(raw, 10)[0]
+                # cmdId 0x14 = TILE_COMMAND_CHEST, skip gold (0x77)
+                if cmd_id == 0x14 and 0 < given_item < 0xC0 and given_item != 0x77:
+                    write_off = entry_off + 4  # givenItem field
                     if write_off not in seen:
                         seen.add(write_off)
-                        results.append((write_off, item_val, '<H'))
-                entry_idx += 1
+                        results.append((write_off, given_item, '<H'))
+            entry_idx += 1
     return results
 
 
@@ -1324,6 +1331,47 @@ def randomize_loot(rom: ROM, config: dict,
     if mode == 'shuffle':
         return _shuffle_loot(rom, giveitem_events, include_ballista)
     return _randomize_loot(rom, giveitem_events, include_ballista)
+
+
+def _randomize_chest(rom: ROM, chest_items: List[Tuple[int, int, str]],
+                     include_ballista: bool = False) -> int:
+    pool = _build_loot_pool(include_ballista)
+    if not pool:
+        return 0
+    patched = 0
+    for write_offset, item_id, pack_fmt in chest_items:
+        new_id = random.choice(pool)
+        if new_id != item_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+            patched += 1
+    return patched
+
+
+def _shuffle_chest(rom: ROM, chest_items: List[Tuple[int, int, str]],
+                   include_ballista: bool = False) -> int:
+    if len(chest_items) < 2:
+        return 0
+    shuffled_ids = [item_id for _, item_id, _ in chest_items]
+    random.shuffle(shuffled_ids)
+    for (write_offset, _, pack_fmt), new_id in zip(chest_items, shuffled_ids):
+        cur = struct.unpack_from(pack_fmt, rom.data, write_offset)[0]
+        if cur != new_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+    return len(chest_items)
+
+
+def randomize_chest(rom: ROM, config: dict) -> int:
+    rules = config.get('loot_randomization', {})
+    if not rules.get('enabled', False):
+        return 0
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    chest_items = _scan_chest_items(rom)
+    if not chest_items:
+        return 0
+    mode = rules.get('mode', 'random')
+    if mode == 'shuffle':
+        return _shuffle_chest(rom, chest_items, include_ballista)
+    return _randomize_chest(rom, chest_items, include_ballista)
 
 
 # ---------------------------------------------------------------------------
@@ -2345,7 +2393,7 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
 
     lines.append('=== Chest Item Changes ===')
     chest_changed = 0
-    for write_offset, item_id, pack_fmt in _scan_chest_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_chest_items(rom):
         if write_offset + 4 <= len(orig_data):
             orig_item = struct.unpack_from(pack_fmt, orig_data, write_offset)[0]
             mod_item = struct.unpack_from(pack_fmt, data, write_offset)[0]
@@ -2487,6 +2535,11 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     if loot_count:
         mode_label = config.get('loot_randomization', {}).get('mode', 'random')
         _vprint(f"Randomized {loot_count} loot event(s) ({mode_label} mode)")
+
+    chest_count = randomize_chest(rom, config)
+    if chest_count:
+        mode_label = config.get('loot_randomization', {}).get('mode', 'random')
+        _vprint(f"Randomized {chest_count} chest item(s) ({mode_label} mode)")
 
     ch_fixed = _ensure_chapter_combat_weapons(rom, config, weapon_pools)
     if ch_fixed:
