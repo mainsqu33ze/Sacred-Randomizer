@@ -1335,7 +1335,7 @@ def randomize_loot(rom: ROM, config: dict,
 
 def _randomize_chest(rom: ROM, chest_items: List[Tuple[int, int, str]],
                      include_ballista: bool = False) -> int:
-    pool = _build_loot_pool(include_ballista)
+    pool = [i for i in _build_loot_pool(include_ballista) if i != 0x77]
     if not pool:
         return 0
     patched = 0
