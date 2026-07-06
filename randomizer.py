@@ -1,9 +1,38 @@
 import random
 import struct
-from fe8rom import ROM, CharacterData, ClassData, ItemData, PID, JID, CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE, WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID, MONSTER_BLOCKED_ITEM_IDS, BALLISTA_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS, PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE, PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR, build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE, CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE, ITEM_NAMES
+from functools import lru_cache
+from typing import Any, Dict, List, Set, Tuple, Optional
+
+from fe8rom import (
+    ROM, CharacterData, ClassData, ItemData, PID, JID,
+    CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE,
+    WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID,
+    MONSTER_BLOCKED_ITEM_IDS, BALLISTA_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS,
+    PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID,
+    PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE,
+    PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR,
+    build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE,
+    CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE,
+    ITEM_NAMES, PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF,
+    PALETTE_ENTRY_SIZE, _U16, _U32, _EVENT_CMDS_WITH_UD,
+)
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
+_VERBOSE = False
+
+
+def _vprint(*args, **kwargs):
+    if _VERBOSE:
+        print(*args, **kwargs)
+
 
 PLAYABLE_PIDS = set(range(PID.EIRIKA, PID.TANA + 1))
-PLAYABLE_PLAYABLE_PIDS = {
+
+PLAYABLE_PLAYABLE_PIDS = frozenset({
     PID.EIRIKA, PID.SETH, PID.GILLIAM, PID.FRANZ, PID.MOULDER,
     PID.VANESSA, PID.ROSS, PID.NEIMI, PID.COLM, PID.GARCIA,
     PID.INNES, PID.LUTE, PID.NATASHA, PID.CORMAG, PID.EPHRAIM,
@@ -11,9 +40,9 @@ PLAYABLE_PLAYABLE_PIDS = {
     PID.TETHYS, PID.MARISA, PID.SALEH, PID.EWAN, PID.LARACHEL,
     PID.DOZLA, PID.RENNAC, PID.DUESSEL, PID.MYRRH, PID.KNOLL,
     PID.JOSHUA, PID.SYRENE, PID.TANA,
-}
+})
 
-STANDARD_JIDS = {
+STANDARD_JIDS = frozenset({
     JID.EPHRAIM_LORD, JID.EIRIKA_LORD,
     JID.EPHRAIM_MASTER_LORD, JID.EIRIKA_MASTER_LORD,
     JID.CAVALIER, JID.CAVALIER_F,
@@ -51,9 +80,9 @@ STANDARD_JIDS = {
     JID.DANCER, JID.SOLDIER,
     JID.JOURNEYMAN_T2, JID.PUPIL_T2,
     JID.RECRUIT_T1, JID.RECRUIT_T2,
-}
+})
 
-MONSTER_JIDS = {
+MONSTER_JIDS = frozenset({
     JID.REVENANT, JID.ENTOUMBED,
     JID.BONEWALKER, JID.BONEWALKER_BOW,
     JID.WIGHT, JID.WIGHT_BOW,
@@ -64,30 +93,23 @@ MONSTER_JIDS = {
     JID.ARCH_MOGALL, JID.GORGON,
     JID.GORGONEGG, JID.GARGOYLE,
     JID.DEATHGOYLE, JID.DRACO_ZOMBIE,
-    JID.MANAKETE_2,  # 0x3B
-}
+    JID.MANAKETE_2,
+})
 
-# Additional monster JIDs beyond the enum range (0x7C-0x7D = 124-125)
-EXTRA_MONSTER_JIDS = {0x7C, 0x7D}
+EXTRA_MONSTER_JIDS = frozenset({0x7C, 0x7D})
 
-# JIDs that generic enemies should never be randomized into.
-# Covers: Manakete (0x0E), Bard (0x46), Dancer (0x4D),
-# Demon King (0x66), unused/civilian JIDs (0x67-0x7B),
-# and special monster classes (0x50=FLEET, 0x51=PHANTOM).
-ENEMY_EXCLUDED_JIDS = {
-    JID.MANAKETE, JID.BARD, JID.DANCER,
-} | {0x50, 0x51} | {0x66} | set(range(0x67, 0x7C))
+ENEMY_EXCLUDED_JIDS = frozenset(
+    {JID.MANAKETE, JID.BARD, JID.DANCER}
+    | {0x50, 0x51}
+    | {0x66}
+    | set(range(0x67, 0x7C))
+)
 
-# Boss PIDs — set of PIDs treated as unique boss units.
-# Default covers PIDs 0x40–0x63 (64–99) and some stragglers 0x68–0x6D (104–109)
-# matching the user's ROM layout.  Excluded by default unless include_bosses: true.
-BOSS_PIDS = set(range(0x40, 0x64)) | {0x28, 0x68, 0x6A, 0x6B, 0x6C, 0x6D}
-# Final boss PID — always excluded from randomization regardless of settings.
+BOSS_PIDS = frozenset(set(range(0x40, 0x64)) | {0x28, 0x68, 0x6A, 0x6B, 0x6C, 0x6D})
+
 FINAL_BOSS_PID = 0xBE
 
-# Limited weapon pools for specific monster classes that can only use
-# a narrow set of items rather than standard weapon pool picks.
-MONSTER_WEAPON_POOLS = {
+MONSTER_WEAPON_POOLS: Dict[int, List[int]] = {
     0x3B: [0x90],                          # MANAKETE_2
     0x52: [0x8B, 0xAD, 0xAE, 0xAF],        # REVENANT
     0x53: [0x8B, 0xAD, 0xAE, 0xAF],        # ENTOUMBED
@@ -100,10 +122,8 @@ MONSTER_WEAPON_POOLS = {
     0x61: [0xAC, 0xAB, 0xB5],             # GORGON
 }
 
-CA_PROMOTED = 0x100  # bit 8 of class attributes
+CA_PROMOTED = 0x100
 
-# Male/female class pairs — same class with gendered variant.
-# Both classes in each pair get the same promotion gains (max of the two values).
 MALE_FEMALE_PAIRS = [
     (JID.EPHRAIM_LORD, JID.EIRIKA_LORD),
     (JID.EPHRAIM_MASTER_LORD, JID.EIRIKA_MASTER_LORD),
@@ -132,29 +152,343 @@ MALE_FEMALE_PAIRS = [
     (JID.GREAT_KNIGHT, JID.GREAT_KNIGHT_F),
 ]
 
-TRAINEE_PIDS = {PID.ROSS, PID.AMELIA, PID.EWAN}
-TRAINEE_JIDS = {JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT}
+TRAINEE_PIDS = frozenset({PID.ROSS, PID.AMELIA, PID.EWAN})
+TRAINEE_JIDS = frozenset({JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT})
 
-MANAKETE_JIDS = {JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH}
+MANAKETE_JIDS = frozenset({JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH})
 
-# Trainee auto-promotion table (GBA addr): 3 entries x 4 bytes = [PID, level, class, pad].
-# The game uses this to auto-promote trainees when they reach level 10.
 TRAINEE_PROMO_TABLE_ADDR = 0x08207044
 TRAINEE_PROMO_ENTRY_SIZE = 4
 TRAINEE_PROMO_COUNT = 3
 
+# Attribute bit masks from lord classes
+CHAR_LOCK_ATTRS = {
+    PID.EIRIKA: (0x0A, 0x10020000, [0x09, 0x85]),
+    PID.EPHRAIM: (0x14, 0x20000000, [0x78, 0x92]),
+}
 
-def _update_trainee_promotion_table(rom, modified_pids):
-    """Update trainee auto-promotion table with randomized classes.
+CHAPTER_NAMES = {
+    0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
+    3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
+    5: "Ch5: Empire's Reach", 6: 'Ch5x: Unbroken Heart',
+    7: 'Ch6: Victims of War', 8: 'Ch7: Waterside Renvall',
+    9: "Ch8: It's a Trap!", 10: 'Ch9: Distant Blade',
+    11: 'Ch10: Revolt at Carcino', 12: 'Ch11: Creeping Darkness',
+    13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
+    15: 'Ch14: Queen of White Dunes', 16: 'Ch15: Scorched Sand',
+    17: 'Ch16: Ruled by Madness', 18: 'Ch17: River of Regrets (Eri)',
+    19: 'Ch18: Two Faces of Evil (Eri)', 20: 'Ch19: Last Hope (Eri)',
+    21: 'Ch20: Darkling Woods (Eri)', 22: 'Ch20: Darkling Woods (Eri)',
+    23: 'Ch9: Fort Rigwald', 24: 'Ch10: Turning Traitor',
+    25: 'Ch11: Phantom Ship', 26: 'Ch12: Landing at Taizel',
+    27: "Ch13: Fluorspar's Oath", 28: 'Ch14: Father and Son',
+    29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruled by Maddness (Eph)',
+    31: 'Ch17: River of Regrets (Eph)', 32: 'Ch18: Two Faces of Evil (Eph)',
+    33: 'Ch19: Last Hope (Eph)', 34: 'Ch20: Darkling Woods (Eph)',
+}
 
-    The table at 0x08207044 has 3 entries (4 bytes each):
-      [PID, level_required, class, padding]
-    for Ross (PID 7), Amelia (PID 18), and Ewan (PID 24).
-    After class randomization, the class byte must match each character's
-    new class or the game's auto-promotion check won't trigger.
-    If a trainee became a Manakete or a non-trainee class, the entry is
-    zeroed out instead (no promotion path or no longer a trainee).
-    """
+EFFECT_NAMES = {0: '(none)', 1: 'Poison', 2: 'Nosferatu', 3: 'Eclipse', 4: 'Devil', 5: 'Stone'}
+
+S_RANK_WEXP = 251
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_tier(rom: ROM, pid: int) -> int:
+    cd = CharacterData(rom, pid)
+    if cd.jidDefault in TRAINEE_JIDS:
+        return 0
+    try:
+        jd = ClassData(rom, cd.jidDefault)
+        if jd.attributes & CA_PROMOTED:
+            return 2
+    except Exception:
+        pass
+    return 1
+
+
+def _scale_stat(val: int, factor: float, min_val: int, max_val: int) -> int:
+    return max(min_val, min(max_val, int(round(val * factor))))
+
+
+def _randomize_stat(orig: int, mean: Optional[float], stddev: float, lo: int, hi: int) -> int:
+    if mean is None:
+        center = orig
+    else:
+        center = mean
+    return max(lo, min(hi, int(round(random.gauss(center, stddev)))))
+
+
+def _distribute_growth_pool(pool_total: int, min_g: int, max_g: int) -> List[int]:
+    weights = [random.random() for _ in range(7)]
+    total_w = sum(weights)
+    vals = [int(round(w * pool_total / total_w)) for w in weights]
+    return [max(min_g, min(max_g, v)) for v in vals]
+
+
+def _adjust_weapon_ranks(cd: CharacterData, new_jid: int, rom: ROM) -> None:
+    jd = ClassData(rom, new_jid)
+    supported = [i for i in range(8) if jd.baseWexp[i] > 0]
+    max_rank = max(cd.baseWexp)
+    highest_lost = max(
+        (cd.baseWexp[i] for i in range(8)
+         if cd.baseWexp[i] == max_rank and jd.baseWexp[i] == 0 and max_rank > 0),
+        default=0
+    )
+    for i in range(8):
+        if jd.baseWexp[i] > 0:
+            cd.baseWexp[i] = max(cd.baseWexp[i], jd.baseWexp[i])
+        else:
+            cd.baseWexp[i] = 0
+    if highest_lost > 0 and supported:
+        target = min(supported, key=lambda i: cd.baseWexp[i])
+        if cd.baseWexp[target] < highest_lost:
+            cd.baseWexp[target] = highest_lost
+
+
+def _parse_omit_classes(config: dict, key: str = 'class_randomization') -> Set[int]:
+    omit = set()
+    for name in config.get(key, {}).get('omit_classes', []):
+        name = name.upper().strip()
+        if hasattr(JID, name):
+            omit.add(getattr(JID, name))
+    return omit
+
+
+def _split_class_pool(rom: ROM) -> Tuple[Set[int], Set[int]]:
+    promoted = set()
+    unpromoted = set()
+    for jid in STANDARD_JIDS:
+        jd = ClassData(rom, jid)
+        if jd.attributes & CA_PROMOTED:
+            promoted.add(jid)
+        elif jid not in TRAINEE_JIDS:
+            unpromoted.add(jid)
+    return promoted, unpromoted
+
+
+def _split_characters_by_tier(rom: ROM) -> Tuple[List[int], List[int]]:
+    promoted_chars = []
+    unpromoted_chars = []
+    for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
+        cd = CharacterData(rom, pid)
+        if ClassData(rom, cd.jidDefault).attributes & CA_PROMOTED:
+            promoted_chars.append(pid)
+        else:
+            unpromoted_chars.append(pid)
+    return promoted_chars, unpromoted_chars
+
+
+def _get_con_rules(rules: dict, class_enabled) -> Tuple[bool, int, int, int]:
+    if 'con' in rules:
+        c = rules['con']
+        return (c.get('enabled', True),
+                c.get('min', 1),
+                c.get('player_min', 1),
+                c.get('stddev', rules.get('stddev', 3)))
+    is_class_random = isinstance(class_enabled, str) and class_enabled == 'random'
+    return (is_class_random, 1, 1, rules.get('stddev', 3))
+
+
+def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int]) -> Optional[int]:
+    candidates = []
+    for t in range(8):
+        if char_ranks[t] == 0 or not weapon_pools[t]:
+            continue
+        max_rank = char_ranks[t]
+        for item_id, rank in weapon_pools[t]:
+            if rank <= max_rank:
+                candidates.append(item_id)
+    return random.choice(candidates) if candidates else None
+
+
+# ---------------------------------------------------------------------------
+# UD array scanning (cached results)
+# ---------------------------------------------------------------------------
+
+def _ud_array_at_lenient(data: bytearray, offset: int, rom_size: int) -> int:
+    if offset + ROM_BASE >= 0x088D0000:
+        return 0
+    pos = offset
+    entries = 0
+    while pos + UNIT_DEF_SIZE <= rom_size:
+        chunk = data[pos:pos + UNIT_DEF_SIZE]
+        if all(b == 0 for b in chunk):
+            return entries
+        pid = chunk[0]
+        jid = chunk[1]
+        if pid == 0 or jid > 127:
+            return 0
+        pos += UNIT_DEF_SIZE
+        entries += 1
+        if entries > 100:
+            return 0
+    return 0
+
+
+def _scan_ud_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, int]]:
+    results = []
+    for cmd_lo in _EVENT_CMDS_WITH_UD:
+        pattern = bytes([cmd_lo, 0x2C])
+        pos = 0
+        while True:
+            pos = data.find(pattern, pos)
+            if pos == -1 or pos + 8 > rom_size:
+                break
+            ptr = _U32.unpack_from(data, pos + 4)[0]
+            if not (0x08000000 <= ptr < ROM_BASE + rom_size and ptr % 4 == 0 and ptr >= 0x08800000):
+                pos += 1
+                continue
+            ud_offset = ptr - ROM_BASE
+            count = _ud_array_at_lenient(data, ud_offset, rom_size)
+            if count > 0:
+                results.append((ud_offset, count))
+            pos += 1
+    return results
+
+
+def _scan_chapter_ud_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, int]]:
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+    seen = set()
+    results = []
+
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = _U32.unpack_from(data, asset_off + map_event_data_id * 4)[0]
+        event_data_off = event_data_ptr - ROM_BASE
+
+        gmap_event_id = data[ch_off + 0x75]
+        gmap_ptr = _U32.unpack_from(data, asset_off + gmap_event_id * 4)[0]
+        gmap_off = gmap_ptr - ROM_BASE
+
+        for off in range(0, 0x400, 4):
+            val = _U32.unpack_from(data, event_data_off + off)[0]
+            if val not in seen:
+                ud_offset = val - ROM_BASE
+                count = _ud_array_at_lenient(data, ud_offset, rom_size)
+                if count > 0:
+                    seen.add(val)
+                    results.append((ud_offset, count))
+
+        for off in range(0, 0x200, 4):
+            val = _U32.unpack_from(data, gmap_off + off)[0]
+            if val not in seen:
+                ud_offset = val - ROM_BASE
+                count = _ud_array_at_lenient(data, ud_offset, rom_size)
+                if count > 0:
+                    seen.add(val)
+                    results.append((ud_offset, count))
+
+    return results
+
+
+def _scan_giveitem_events(data: bytearray, rom_size: int) -> List[Tuple[int, int, str]]:
+    lo = rom_offset(0x08800000)
+    hi = min(rom_offset(0x08A00000), rom_size)
+    hdr = b'\x40\x0A\x00\x00'
+    pos = lo
+    results = []
+    while True:
+        pos = data.find(hdr, pos, hi)
+        if pos == -1 or pos + 20 > rom_size:
+            break
+        if pos >= 8 and data[pos-8:pos-6] == b'\x40\x05':
+            pos += 1
+            continue
+        ptr = _U32.unpack_from(data, pos + 4)[0]
+        at_8, at_9, at_11 = data[pos + 8], data[pos + 9], data[pos + 11]
+        item_id = _U32.unpack_from(data, pos + 12)[0]
+        if (0x08000000 <= ptr <= 0x08FFFFFF and
+            at_8 == 0x40 and at_9 == 0x05 and at_11 == 0x00 and
+            0 < item_id < 0xC0):
+            results.append((pos + 12, item_id, '<I'))
+        pos += 1
+    return results
+
+
+def _scan_chest_items(rom: ROM) -> List[Tuple[int, int, str]]:
+    """Scan section[2] (locationBasedEvents) of each chapter for type-0x07
+    CHES entries with cmdId=0x14 (TILE_COMMAND_CHEST). Returns
+    (write_offset, item_id, '<H') for each non-gold chest item."""
+    data = rom.data
+    seen = set()
+    results = []
+
+    for ch in range(35):
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+        if map_event_data_id == 0:
+            continue
+        event_data_ptr = _U32.unpack_from(data, (CHAPTER_ASSET_TABLE - ROM_BASE) + map_event_data_id * 4)[0]
+        if event_data_ptr == 0:
+            continue
+        event_data_off = event_data_ptr - ROM_BASE
+
+        # Read section[2] = locationBasedEvents
+        sec_ptr = _U32.unpack_from(data, event_data_off + 8)[0]
+        if sec_ptr == 0:
+            continue
+        off = sec_ptr - ROM_BASE
+        if off < 0 or off + 12 > len(data):
+            continue
+
+        entry_idx = 0
+        while off + (entry_idx + 1) * 12 <= len(data):
+            entry_off = off + entry_idx * 12
+            raw = data[entry_off : entry_off + 12]
+            if all(b == 0 for b in raw):
+                break
+            # type-0x07 = EvCheck07_CHES
+            if raw[0] == 0x07:
+                given_item = _U16.unpack_from(raw, 4)[0]
+                x = raw[8]
+                y = raw[9]
+                cmd_id = _U16.unpack_from(raw, 10)[0]
+                # cmdId 0x14 = TILE_COMMAND_CHEST, skip gold (0x77)
+                if cmd_id == 0x14 and 0 < given_item < 0xC0 and given_item != 0x77:
+                    write_off = entry_off + 4  # givenItem field
+                    if write_off not in seen:
+                        seen.add(write_off)
+                        results.append((write_off, given_item, '<H'))
+            entry_idx += 1
+    return results
+
+
+def _scan_loot_events(rom: ROM, giveitem_events: List[Tuple[int, int, str]],
+                      include_ballista: bool = False) -> List[Tuple[int, int, str]]:
+    loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
+    loot_excluded.update(PROMOTION_ITEM_IDS)
+    loot_excluded.update({0x3D, 0x44, 0x8A})
+    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    if not include_ballista:
+        loot_excluded.update(BALLISTA_ITEM_IDS)
+    seen = set()
+    results = []
+    for write_offset, item_id, pack_fmt in giveitem_events:
+        if item_id not in loot_excluded and write_offset not in seen:
+            seen.add(write_offset)
+            results.append((write_offset, item_id, pack_fmt))
+    return results
+
+
+def _build_loot_pool(include_ballista: bool = False) -> List[int]:
+    excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
+    excluded.update({0x3D, 0x44, 0x8A})
+    excluded.update(PROMOTION_ITEM_IDS)
+    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    if not include_ballista:
+        excluded.update(BALLISTA_ITEM_IDS)
+    return [item_id for item_id in range(1, 0xC0) if item_id not in excluded]
+
+
+# ---------------------------------------------------------------------------
+# Trainee promotion table
+# ---------------------------------------------------------------------------
+
+def _update_trainee_promotion_table(rom: ROM, modified_pids: Set[int]) -> int:
     off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
     patched = 0
     for i in range(TRAINEE_PROMO_COUNT):
@@ -175,14 +509,7 @@ def _update_trainee_promotion_table(rom, modified_pids):
     return patched
 
 
-def _remap_trainee_table(rom):
-    """Rebuild trainee promotion table PIDs based on which characters have trainee classes.
-
-    After recruitment order randomization, the three trainee characters may no longer
-    be at PIDs 7, 18, 24. This function scans all playable PIDs for characters with
-    trainee classes (Journeyman, Recruit, Pupil) and updates the table to point at
-    whichever PIDs actually hold those classes. Unused entries are zeroed.
-    """
+def _remap_trainee_table(rom: ROM) -> int:
     off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
     trainee_pids = []
     for pid in PLAYABLE_PLAYABLE_PIDS:
@@ -209,26 +536,11 @@ def _remap_trainee_table(rom):
     return patched
 
 
-def randomize_recruitment_order(rom, config, preserve_tier=True):
-    """Randomize recruitment order by swapping CharacterData among playable PIDs.
+# ---------------------------------------------------------------------------
+# Recruitment order
+# ---------------------------------------------------------------------------
 
-    Shuffles CharacterData (stats, class, growths, portrait, name text ID, etc.)
-    among the 33 playable character PIDs (1-34 excluding unused PID 27). After
-    this, recruiting the unit at a given story slot yields a different character's
-    data.
-
-    When preserve_tier=True, swaps are grouped by class tier (trainee/unpromoted/
-    promoted) so e.g. Seth (promoted) only swaps with other promoted units,
-    preventing a prepromote from appearing in early-game unpromoted slots.
-
-    PaletteClassTable and PaletteIndexTable entries are swapped in lockstep so
-    each PID keeps the palette that matches the character whose data ended up there.
-    The trainee promotion table is remapped to point at whichever PIDs now have
-    trainee classes.
-    """
-    import struct
-    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
-
+def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = True) -> Set[int]:
     rules = config.get('recruitment_randomization', {})
     if not rules.get('enabled', False):
         return set()
@@ -236,13 +548,11 @@ def randomize_recruitment_order(rom, config, preserve_tier=True):
     pids = sorted(PLAYABLE_PLAYABLE_PIDS)
     n = len(pids)
 
-    # Build permutation
     if preserve_tier:
         _tier_map = {pid: _get_tier(rom, pid) for pid in pids}
         tier_groups = {0: [], 1: [], 2: []}
         for pid in pids:
             tier_groups[_tier_map[pid]].append(pid)
-        # Shuffle each tier group within its own positions
         shuffled = list(pids)
         for t in sorted(tier_groups):
             group = tier_groups[t]
@@ -255,15 +565,14 @@ def randomize_recruitment_order(rom, config, preserve_tier=True):
         shuffled = list(pids)
         random.shuffle(shuffled)
 
-    # Snapshot all CharacterData blocks (PINFO_SIZE = 0x34 = 52 bytes)
+    char_table_off = rom_offset(CHARACTER_TABLE_ADDR)
     char_data = {}
     for pid in pids:
-        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        off = char_table_off + (pid - 1) * PINFO_SIZE
         char_data[pid] = bytearray(rom.data[off:off + PINFO_SIZE])
 
-    # Write shuffled data; preserve byte 4 (PID / self-index field)
     for src_pid, dst_pid in zip(pids, shuffled):
-        dst_off = rom_offset(CHARACTER_TABLE_ADDR) + (dst_pid - 1) * PINFO_SIZE
+        dst_off = char_table_off + (dst_pid - 1) * PINFO_SIZE
         for j in range(PINFO_SIZE):
             if j == 4:
                 continue
@@ -271,7 +580,7 @@ def randomize_recruitment_order(rom, config, preserve_tier=True):
         rom.data[dst_off + 4] = dst_pid
 
     # Swap PaletteClassTable (7 bytes per PID)
-    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_cls_off = pal_cls_gba - ROM_BASE
     pal_cls_data = {}
     for pid in pids:
@@ -282,7 +591,7 @@ def randomize_recruitment_order(rom, config, preserve_tier=True):
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_cls_data[src_pid]
 
     # Swap PaletteIndexTable (7 bytes per PID)
-    pal_idx_gba = struct.unpack('<I', rom.data[PALETTE_INDEX_TABLE_PTR_OFF:PALETTE_INDEX_TABLE_PTR_OFF + 4])[0]
+    pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
     pal_idx_off = pal_idx_gba - ROM_BASE
     pal_idx_data = {}
     for pid in pids:
@@ -292,37 +601,16 @@ def randomize_recruitment_order(rom, config, preserve_tier=True):
         dst_off = pal_idx_off + (dst_pid - 1) * PALETTE_ENTRY_SIZE
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[src_pid]
 
-    # Remap trainee promotion table to point at PIDs that now have trainee classes
     remapped = _remap_trainee_table(rom)
     if remapped:
-        print(f"Remapped {remapped} trainee promotion table entr(y/ies) after recruitment shuffle")
+        _vprint(f"Remapped {remapped} trainee promotion table entr(y/ies) after recruitment shuffle")
 
     label = " (tier-preserving)" if preserve_tier else ""
-    print(f"Randomized recruitment order for {n} units{label}")
+    _vprint(f"Randomized recruitment order for {n} units{label}")
     return set(pids)
 
 
-def _get_tier(rom, pid):
-    """Return tier for a PID: 0=trainee, 1=unpromoted, 2=promoted."""
-    cd = CharacterData(rom, pid)
-    jid = cd.jidDefault
-    if jid in TRAINEE_JIDS:
-        return 0
-    try:
-        jd = ClassData(rom, jid)
-        if jd.attributes & 0x100:
-            return 2
-    except Exception:
-        pass
-    return 1
-
-
-def _sync_shared_pid_classes(rom):
-    """Sync class across PIDs representing the same character.
-    
-    Orson: PID 42 (player, ch5x) and PID 0x6D (boss, ch16).
-    After class randomization, the boss version matches the player version.
-    """
+def _sync_shared_pid_classes(rom: ROM) -> None:
     sync_groups = [(42, 0x6D)]
     for src_pid, dst_pid in sync_groups:
         try:
@@ -333,158 +621,19 @@ def _sync_shared_pid_classes(rom):
             if cd_src.jidDefault != cd_dst.jidDefault:
                 cd_dst.jidDefault = cd_src.jidDefault
                 cd_dst.write(rom)
-                print(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
+                _vprint(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
         except Exception:
             pass
 
 
-def _enforce_pid_tiers(rom, config):
-    """Enforce class tier constraints on story-critical PID slots.
+# ---------------------------------------------------------------------------
+# Class randomization
+# ---------------------------------------------------------------------------
 
-    After all class randomization, certain PID slots must always hold specific
-    class tiers to prevent early-game balance issues. Seth (PID 2) and Natasha
-    (PID 13) must have weapon-usable classes (not staves-only) for combat
-    cutscenes. Ross/Amelia/Ewan (PIDs 7/18/24) must be trainees for the
-    auto-promotion check.
-
-    Uses the same class pools as randomize_class (STANDARD_JIDS, omit_classes,
-    include_soldier, etc.).
-    """
-    unprompted_pids = {1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31}
-    trainee_pids = {7, 18, 24}
-    weapon_req_pids = {2, 13}
-
-    from fe8rom import JID
-
-    promoted_jids, unpromoted_jids = _split_class_pool(rom)
-    omit_jids = _parse_omit_classes(config)
-    include_soldier = config.get('class_randomization', {}).get('include_soldier', False)
-
-    promoted_jids -= omit_jids
-    unpromoted_jids -= omit_jids
-    if not include_soldier:
-        unpromoted_jids.discard(JID.SOLDIER)
-
-    unpromoted_list = sorted(unpromoted_jids)
-    trainee_list = sorted(TRAINEE_JIDS - omit_jids)
-
-    def _has_weapon(jid):
-        try:
-            jd = ClassData(rom, jid)
-            return any(jd.baseWexp[t] > 0 for t in range(8) if t != 4)
-        except Exception:
-            return False
-
-    fixed = set()
-    for pid in unprompted_pids:
-        cd = CharacterData(rom, pid)
-        jid = cd.jidDefault
-        if jid in TRAINEE_JIDS or jid in promoted_jids:
-            pool = [j for j in unpromoted_list if not (pid in weapon_req_pids and not _has_weapon(j))]
-            new_jid = random.choice(pool) if pool else random.choice(unpromoted_list)
-            cd.jidDefault = new_jid
-            _adjust_weapon_ranks(cd, new_jid, rom)
-            cd.write(rom)
-            fixed.add(pid)
-
-    for pid in trainee_pids:
-        cd = CharacterData(rom, pid)
-        jid = cd.jidDefault
-        if jid not in TRAINEE_JIDS:
-            if not trainee_list:
-                continue
-            new_jid = random.choice(trainee_list)
-            cd.jidDefault = new_jid
-            _adjust_weapon_ranks(cd, new_jid, rom)
-            cd.write(rom)
-            fixed.add(pid)
-
-    for pid in weapon_req_pids:
-        cd = CharacterData(rom, pid)
-        jid = cd.jidDefault
-        if not _has_weapon(jid):
-            if pid in unprompted_pids:
-                pool = [j for j in unpromoted_list if _has_weapon(j)]
-            else:
-                pool = [j for j in unpromoted_list + list(promoted_jids) if _has_weapon(j)]
-            if pool:
-                new_jid = random.choice(pool)
-                cd.jidDefault = new_jid
-                _adjust_weapon_ranks(cd, new_jid, rom)
-                cd.write(rom)
-                fixed.add(pid)
-
-    return fixed
-
-
-def _adjust_weapon_ranks(cd, new_jid, rom):
-    """Zero weapon ranks for types the new class can't use; use class base as floor.
-    Transfers the character's highest lost weapon rank to an available type."""
-    jd = ClassData(rom, new_jid)
-    supported = [i for i in range(8) if jd.baseWexp[i] > 0]
-
-    max_rank = max(cd.baseWexp)
-    highest_lost = 0
-    for i in range(8):
-        if cd.baseWexp[i] == max_rank and jd.baseWexp[i] == 0 and max_rank > 0:
-            highest_lost = max_rank
-            break
-
-    for i in range(8):
-        if jd.baseWexp[i] > 0:
-            cd.baseWexp[i] = max(cd.baseWexp[i], jd.baseWexp[i])
-        else:
-            cd.baseWexp[i] = 0
-
-    if highest_lost > 0 and supported:
-        target = min(supported, key=lambda i: cd.baseWexp[i])
-        if cd.baseWexp[target] < highest_lost:
-            cd.baseWexp[target] = highest_lost
-
-
-def _split_class_pool(rom):
-    """Separate STANDARD_JIDS into promoted and unpromoted sets using attribute bit 8.
-    Excludes trainee classes from the general unpromoted pool."""
-    promoted = set()
-    unpromoted = set()
-    for jid in STANDARD_JIDS:
-        jd = ClassData(rom, jid)
-        if jd.attributes & CA_PROMOTED:
-            promoted.add(jid)
-        elif jid not in TRAINEE_JIDS:
-            unpromoted.add(jid)
-    return promoted, unpromoted
-
-
-def _split_characters_by_tier(rom):
-    """Group playable characters by promoted/unpromoted based on original class."""
-    promoted_chars = []
-    unpromoted_chars = []
-    for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
-        cd = CharacterData(rom, pid)
-        original_jd = ClassData(rom, cd.jidDefault)
-        if original_jd.attributes & CA_PROMOTED:
-            promoted_chars.append(pid)
-        else:
-            unpromoted_chars.append(pid)
-    return promoted_chars, unpromoted_chars
-
-
-def _parse_omit_classes(config):
-    """Convert omit_classes config list to a set of JID values."""
-    omit = set()
-    for name in config.get('class_randomization', {}).get('omit_classes', []):
-        name = name.upper().strip()
-        if hasattr(JID, name):
-            omit.add(getattr(JID, name))
-    return omit
-
-
-def randomize_class(rom, config):
+def randomize_class(rom: ROM, config: dict) -> Set[int]:
     rules = config.get('class_randomization', {})
     mode = rules.get('mode', 'shuffle')
     manakete_count = rules.get('manakete_count', 1)
-    # Backward compat: old shuffle: false meant no changes at all
     if 'shuffle' in rules and not rules.get('shuffle', True):
         mode = 'none'
         manakete_count = 0
@@ -493,7 +642,7 @@ def randomize_class(rom, config):
 
     modified_pids = set()
 
-    def _assign(pid, new_jid):
+    def _assign(pid: int, new_jid: int) -> None:
         cd = CharacterData(rom, pid)
         cd.jidDefault = new_jid
         _adjust_weapon_ranks(cd, new_jid, rom)
@@ -511,11 +660,9 @@ def randomize_class(rom, config):
     unpromoted_jids -= omit_jids
     if not include_soldier:
         unpromoted_jids.discard(JID.SOLDIER)
-    # Soldier has no promotion path in vanilla, so also remove from promoted if somehow present
     promoted_jids.discard(JID.SOLDIER)
 
     if mode == 'shuffle':
-        # Permute classes within each tier (no replacement)
         if trainee_chars and available_trainee:
             trainee_pool = list(available_trainee)
             random.shuffle(trainee_pool)
@@ -535,7 +682,6 @@ def randomize_class(rom, config):
                 _assign(pid, new_jid)
 
     elif mode == 'random':
-        # Sampling with replacement — each character picks independently from their tier
         promoted_list = sorted(promoted_jids)
         unpromoted_list = sorted(unpromoted_jids)
         trainee_list = sorted(available_trainee)
@@ -552,7 +698,6 @@ def randomize_class(rom, config):
             if unpromoted_list:
                 _assign(pid, random.choice(unpromoted_list))
 
-    # Manakete assignment — overwrites whatever the mode assigned
     if manakete_count > 0 and PLAYABLE_PLAYABLE_PIDS:
         playable_all = sorted(PLAYABLE_PLAYABLE_PIDS)
         count = min(manakete_count, len(playable_all))
@@ -562,16 +707,11 @@ def randomize_class(rom, config):
     return modified_pids
 
 
-def _distribute_growth_pool(pool_total, min_g, max_g):
-    weights = [random.random() for _ in range(7)]
-    total_w = sum(weights)
-    vals = [int(round(w * pool_total / total_w)) for w in weights]
-    vals = [max(min_g, min(max_g, v)) for v in vals]
-    return vals
+# ---------------------------------------------------------------------------
+# Class growths
+# ---------------------------------------------------------------------------
 
-
-def _randomize_class_growths(rom, jid, class_shuffle, rules):
-    """Apply one class growth mode to a single JID. Returns True if changed."""
+def _randomize_class_growths(rom: ROM, jid: int, class_shuffle, rules: dict) -> bool:
     jd = ClassData(rom, jid)
     growths = [jd.growthHP, jd.growthPow, jd.growthSkl,
                jd.growthSpd, jd.growthDef, jd.growthRes,
@@ -611,7 +751,11 @@ def _randomize_class_growths(rom, jid, class_shuffle, rules):
     return True
 
 
-def randomize_growths(rom, config):
+# ---------------------------------------------------------------------------
+# Growths
+# ---------------------------------------------------------------------------
+
+def randomize_growths(rom: ROM, config: dict) -> None:
     rules = config.get('growth_randomization', {})
     char_shuffle = rules.get('character', False)
     class_shuffle = rules.get('class', False)
@@ -640,49 +784,19 @@ def randomize_growths(rom, config):
             cd.write(rom)
 
     if class_shuffle:
-        from fe8rom import CLASS_COUNT
         count = 0
         for jid in range(1, CLASS_COUNT + 1):
             if _randomize_class_growths(rom, jid, class_shuffle, rules):
                 count += 1
         if count:
-            print(f"Randomized class growth rates for {count} class(es)")
+            _vprint(f"Randomized class growth rates for {count} class(es)")
 
 
-def _scale_stat(val, factor, min_val, max_val):
-    s = int(round(val * factor))
-    return max(min_val, min(max_val, s))
+# ---------------------------------------------------------------------------
+# Base stats
+# ---------------------------------------------------------------------------
 
-
-def _randomize_stat(orig, mean, stddev, lo, hi):
-    if mean is None:
-        center = orig
-    else:
-        center = mean
-    val = int(round(random.gauss(center, stddev)))
-    return max(lo, min(hi, val))
-
-
-def _get_con_rules(rules, class_enabled):
-    """Return (con_enabled, con_class_min, con_player_min, con_stddev) tuple.
-    
-    If the user explicitly provides a 'con' subsection, use its settings.
-    Otherwise fall back to legacy behaviour (no Con for character random,
-    Con with global stddev for class random).  'min' applies to class bases;
-    'player_min' applies to player unit bases (defaults to 1).
-    """
-    if 'con' in rules:
-        c = rules['con']
-        return (c.get('enabled', True),
-                c.get('min', 1),
-                c.get('player_min', 1),
-                c.get('stddev', rules.get('stddev', 3)))
-    # legacy: character random preserves Con, class random randomizes it
-    is_class_random = isinstance(class_enabled, str) and class_enabled == 'random'
-    return (is_class_random, 1, 1, rules.get('stddev', 3))
-
-
-def randomize_base_stats(rom, config):
+def randomize_base_stats(rom: ROM, config: dict) -> None:
     rules = config.get('base_stat_randomization', {})
     char_enabled = rules.get('character', False)
     class_enabled = rules.get('class', False)
@@ -771,9 +885,9 @@ def randomize_base_stats(rom, config):
                     pairs.append((jid, [random.randint(0, 20) for _ in range(stat_count)]))
             if len(pairs) < 2:
                 continue
-            shuffled = [p[1] for p in pairs]
-            random.shuffle(shuffled)
-            for (jid, _), stats in zip(pairs, shuffled):
+            shuffled_stats = [p[1] for p in pairs]
+            random.shuffle(shuffled_stats)
+            for (jid, _), stats in zip(pairs, shuffled_stats):
                 jd = ClassData(rom, jid)
                 (jd.baseHP, jd.basePow, jd.baseSkl, jd.baseSpd,
                  jd.baseDef, jd.baseRes) = stats[:6]
@@ -799,14 +913,11 @@ def randomize_base_stats(rom, config):
             jd.write(rom)
 
 
-def synchronize_promotion_gains(rom):
-    """Sync promotionHp/Pow/Skl/Spd/Def/Res between male/female class pairs.
+# ---------------------------------------------------------------------------
+# Promotion gain sync
+# ---------------------------------------------------------------------------
 
-    For each MALE_FEMALE_PAIRS entry, reads both classes' promotion stat
-    bonuses, takes the higher value per stat, and writes the max back to
-    both.  This ensures e.g. Hero and Hero_F grant the same promotion
-    bonuses regardless of which gendered variant a unit promotes into.
-    """
+def synchronize_promotion_gains(rom: ROM) -> None:
     changed = 0
     for male_jid, female_jid in MALE_FEMALE_PAIRS:
         try:
@@ -820,7 +931,7 @@ def synchronize_promotion_gains(rom):
         for f in fields:
             vm = getattr(jd_m, f)
             vf = getattr(jd_f, f)
-            best = max(vm, vf)
+            best = vm if vm > vf else vf
             if vm != best:
                 setattr(jd_m, f, best)
                 dirty = True
@@ -832,10 +943,14 @@ def synchronize_promotion_gains(rom):
             jd_f.write(rom)
             changed += 1
     if changed:
-        print(f"Synchronized promotion gains for {changed} class pair(s)")
+        _vprint(f"Synchronized promotion gains for {changed} class pair(s)")
 
 
-def randomize_affinity(rom, config):
+# ---------------------------------------------------------------------------
+# Affinity
+# ---------------------------------------------------------------------------
+
+def randomize_affinity(rom: ROM, config: dict) -> None:
     rules = config.get('affinity_randomization', {})
     if not rules.get('enabled', False):
         return
@@ -846,137 +961,16 @@ def randomize_affinity(rom, config):
         cd.write(rom)
 
 
-# Event commands that reference a UD array via `?? 0x2C xx xx pointer`.
-# LOAD1-4 (0x40-0x43) are the standard LOADUNIT commands.
-# 0x54, 0x8C, 0xA8, 0xAA, 0xC4 also reference UD arrays in some event scripts.
-_EVENT_CMDS_WITH_UD = (0x40, 0x41, 0x42, 0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4)
+# ---------------------------------------------------------------------------
+# Unit definitions
+# ---------------------------------------------------------------------------
 
-
-def _ud_array_at(rom, offset):
-    """Check if offset points to a valid UnitDefinition array. Returns entry count or 0."""
-    # Reject arrays in compressed animation data (0x088D0000+)
-    if offset + ROM_BASE >= 0x088D0000:
-        return 0
-    pos = offset
-    entries = 0
-    while pos + UNIT_DEF_SIZE <= len(rom.data):
-        chunk = rom.data[pos:pos + UNIT_DEF_SIZE]
-        if all(b == 0 for b in chunk):
-            return entries
-        char_idx = chunk[0]
-        class_idx = chunk[1]
-        if char_idx == 0 or char_idx > 114 or class_idx > 114:
-            return 0
-        pos += UNIT_DEF_SIZE
-        entries += 1
-        if entries > 100:
-            return 0
-    return 0
-
-
-def _scan_ud_arrays(rom):
-    """Yield (ud_offset, entry_count) for every UD array referenced by event commands.
-    
-    Uses _ud_array_at_lenient so arrays with PID > 114 (legitimate generic enemies)
-    are not incorrectly rejected.
-    """
-    data = rom.data
-    rom_size = len(data)
-    for cmd_lo in _EVENT_CMDS_WITH_UD:
-        pattern = bytes([cmd_lo, 0x2C])
-        pos = 0
-        while True:
-            pos = data.find(pattern, pos)
-            if pos == -1 or pos + 8 > rom_size:
-                break
-            ptr = struct.unpack_from('<I', data, pos + 4)[0]
-            if not (0x08000000 <= ptr < ROM_BASE + rom_size and ptr % 4 == 0 and ptr >= 0x08800000):
-                pos += 1
-                continue
-            ud_offset = ptr - ROM_BASE
-            count = _ud_array_at_lenient(rom, ud_offset)
-            if count > 0:
-                yield ud_offset, count
-            pos += 1
-
-
-def _ud_array_at_lenient(rom, offset):
-    """Lenient UD array validation for chapter data arrays.
-    
-    Unlike _ud_array_at, allows entries with pid > 114 (NPC/allied units
-    that the game places alongside generic enemies in chapter data UD arrays).
-    Only rejects arrays with pid=0 mid-array, class_idx > 127, or >100 entries.
-    """
-    if offset + ROM_BASE >= 0x088D0000:
-        return 0
-    pos = offset
-    entries = 0
-    while pos + UNIT_DEF_SIZE <= len(rom.data):
-        chunk = rom.data[pos:pos + UNIT_DEF_SIZE]
-        if all(b == 0 for b in chunk):
-            return entries
-        pid = chunk[0]
-        jid = chunk[1]
-        if pid == 0 or jid > 127:
-            return 0
-        pos += UNIT_DEF_SIZE
-        entries += 1
-        if entries > 100:
-            return 0
-    return 0
-
-
-def _scan_chapter_ud_arrays(rom):
-    """Yield (ud_offset, entry_count) for UD arrays referenced by chapter data.
-    
-    Covers two sources per chapter:
-      - Direct UD pointers embedded in event data (scanned up to 0x400 bytes)
-      - GMap UD arrays (scanned up to 0x200 bytes)
-    """
-    data = rom.data
-    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
-    seen = set()
-
-    for ch in range(35):
-        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
-        
-        map_event_data_id = data[ch_off + 0x74]
-        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
-        event_data_off = event_data_ptr - ROM_BASE
-        
-        gmap_event_id = data[ch_off + 0x75]
-        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
-        gmap_off = gmap_ptr - ROM_BASE
-
-        # Direct UD pointers in event data
-        for off in range(0, 0x400, 4):
-            val = struct.unpack_from('<I', data, event_data_off + off)[0]
-            if val not in seen:
-                ud_offset = val - ROM_BASE
-                count = _ud_array_at_lenient(rom, ud_offset)
-                if count > 0:
-                    seen.add(val)
-                    yield ud_offset, count
-
-        # GMap UD arrays
-        for off in range(0, 0x200, 4):
-            val = struct.unpack_from('<I', data, gmap_off + off)[0]
-            if val not in seen:
-                ud_offset = val - ROM_BASE
-                count = _ud_array_at_lenient(rom, ud_offset)
-                if count > 0:
-                    seen.add(val)
-                    yield ud_offset, count
-
-
-def patch_unit_definitions(rom, modified_pids):
-    """Scan ROM for event commands referencing UnitDefinition arrays and patch
-    any class override so the unit uses jidDefault (classIndex = 0)."""
+def patch_unit_definitions(rom: ROM, modified_pids: Set[int],
+                           ud_arrays: List[Tuple[int, int]]) -> int:
     if not modified_pids:
         return 0
-
     total_patched = 0
-    for ud_offset, _ in _scan_ud_arrays(rom):
+    for ud_offset, _ in ud_arrays:
         patched = 0
         arr_pos = ud_offset
         while arr_pos + UNIT_DEF_SIZE <= len(rom.data):
@@ -990,456 +984,154 @@ def patch_unit_definitions(rom, modified_pids):
             arr_pos += UNIT_DEF_SIZE
         if patched:
             total_patched += patched
-
     return total_patched
 
 
-def _pick_weapon_for_type(rom, weapon_pools, char_ranks):
-    """Pick a random weapon from usable weapon types, respecting max rank."""
-    candidates = []
-    for t in range(8):
-        if char_ranks[t] == 0 or not weapon_pools[t]:
-            continue
-        max_rank = char_ranks[t]
-        for item_id, rank in weapon_pools[t]:
-            if rank <= max_rank:
-                candidates.append((t, item_id))
-    if not candidates:
-        return None
-    return random.choice(candidates)[1]
+# ---------------------------------------------------------------------------
+# Weapon effects
+# ---------------------------------------------------------------------------
 
-
-def _scan_giveitem_events(rom):
-    """Yield (write_offset, item_id, pack_fmt) for GiveItem commands.
-
-    Searches for the 40-format GiveItem command:
-      40 0A 00 00 [GBA_ptr] 40 05 [slot] 00 [item_id_u32] [rest...]
-    at event data region 0x08800000-0x08A00000.
-    Both Format A (pointer 0x08591F40) and other-pointer variants are caught.
-    write_offset is the ROM offset where the u32 item_id lives; pack_fmt='<I'.
-    """
-    data = rom.data
-    lo = rom_offset(0x08800000)
-    hi = min(rom_offset(0x08A00000), len(data))
-    hdr = b'\x40\x0A\x00\x00'
-    pos = lo
-    seen = set()
-    while True:
-        pos = data.find(hdr, pos, hi)
-        if pos == -1:
-            break
-        if pos + 20 > len(data):
-            break
-        # Skip false positives where 40 0A 00 00 is a sub-command of the
-        # "erase by superimposing on lord" command (40 05 [slot] 00 [target_pid] 40 0A 00 00 [ptr]).
-        # In this pattern 40 05 appears 8 bytes before 40 0A 00 00.
-        if pos >= 8 and data[pos-8:pos-6] == b'\x40\x05':
-            pos += 1
-            continue
-        # Validate GiveItem structure
-        ptr = struct.unpack_from('<I', data, pos + 4)[0]
-        at_8 = data[pos + 8]
-        at_9 = data[pos + 9]
-        at_11 = data[pos + 11]
-        item_id = struct.unpack_from('<I', data, pos + 12)[0]
-        # Valid: GBA pointer at +4, 40 05 at +8-9, 0x00 at +11, valid item_id
-        if (0x08000000 <= ptr <= 0x08FFFFFF and
-            at_8 == 0x40 and at_9 == 0x05 and at_11 == 0x00 and
-            0 < item_id < 0xC0):
-            if pos not in seen:
-                seen.add(pos)
-                yield pos + 12, item_id, '<I'
-        pos += 1
-
-
-def _scan_chest_events(rom):
-    """Yield (write_offset, item_id, pack_fmt) for chest items.
-
-    Chests are 12-byte Location Events table entries in section[2] (the
-    Location Events section) with type 0x12 (byte 1).
-    Format: flag(1) type(1) x(1) y(1) item(u16 at +4) unk(u16 at +6) script(u32 at +8).
-    write_offset is offset+4 where the u16 item_id lives; pack_fmt='<H'.
-
-    Only section[2] and section[6] with type 0x12 are scanned — type 0x00
-    entries in section[2] overlap with Always Events and cannot be
-    reliably distinguished from chests without chapter-specific heuristics.
-    """
-    data = rom.data
-    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
-    seen = set()
-
-    for ch in range(35):
-        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
-        map_event_data_id = data[ch_off + 0x74]
-        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
-        if event_data_ptr == 0:
-            continue
-        event_data_off = event_data_ptr - ROM_BASE
-
-        for sec_idx in (2, 6):
-            ptr = struct.unpack_from('<I', data, event_data_off + sec_idx * 4)[0]
-            if ptr == 0:
-                continue
-            off = ptr - ROM_BASE
-            if off < 0 or off + 12 > len(data):
-                continue
-
-            entry_idx = 0
-            while off + (entry_idx + 1) * 12 <= len(data):
-                raw = data[off + entry_idx * 12 : off + entry_idx * 12 + 12]
-                if all(b == 0 for b in raw):
-                    break
-                if raw[1] != 0x12:
-                    entry_idx += 1
-                    continue
-                item_val = struct.unpack_from('<H', raw, 4)[0]
-                script_ptr = struct.unpack_from('<I', raw, 8)[0]
-                if 0 < item_val < 0xC0 and 0x08000000 <= script_ptr <= 0x08FFFFFF:
-                    write_off = off + entry_idx * 12 + 4
-                    if write_off not in seen:
-                        seen.add(write_off)
-                        yield write_off, item_val, '<H'
-                entry_idx += 1
-
-
-def _scan_loot_events(rom, include_ballista=False):
-    """Yield (write_offset, item_id, pack_fmt) for all lootable items.
-
-    Combines GiveItem events and chest Location Events. Filters out
-    promotion items, story-exclusive items, monster-blocked items,
-    and dummy items — these are not loot.
-    write_offset is the ROM offset where the item ID should be written.
-    pack_fmt is '<I' for GiveItem (u32) or '<H' for chests (u16).
-    """
-    loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
-    loot_excluded.update(PROMOTION_ITEM_IDS)
-    loot_excluded.update({0x3D, 0x44, 0x8A})  # dummy items
-    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
-    if not include_ballista:
-        loot_excluded.update(BALLISTA_ITEM_IDS)
-    seen = set()
-    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
-        if item_id not in loot_excluded:
-            if write_offset not in seen:
-                seen.add(write_offset)
-                yield write_offset, item_id, pack_fmt
-
-
-def _build_loot_pool(rom, include_ballista=False):
-    """Build list of eligible item IDs for random loot replacement.
-
-    Includes all items 0x01-0xBF that are not monster-blocked,
-    story-exclusive, or dummy entries.
-    """
-    excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
-    excluded.update({0x3D, 0x44, 0x8A})  # dummy items
-    excluded.update(PROMOTION_ITEM_IDS)  # promotion items reserved for promo phase
-    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
-    if not include_ballista:
-        excluded.update(BALLISTA_ITEM_IDS)
-    pool = []
-    for item_id in range(1, 0xC0):
-        if item_id not in excluded:
-            pool.append(item_id)
-    return pool
-
-
-def _shuffle_loot(rom, include_ballista=False):
-    """Collect all loot item IDs, shuffle them, and redistribute."""
-    items = list(_scan_loot_events(rom, include_ballista))
-    if len(items) < 2:
-        return 0
-    shuffled_ids = [item_id for _, item_id, _ in items]
-    random.shuffle(shuffled_ids)
-    for (write_offset, _, pack_fmt), new_id in zip(items, shuffled_ids):
-        cur = struct.unpack_from(pack_fmt, rom.data, write_offset)[0]
-        if cur != new_id:
-            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
-    return len(items)
-
-
-def _randomize_loot(rom, include_ballista=False):
-    """Replace each loot item with a random eligible replacement."""
-    pool = _build_loot_pool(rom, include_ballista)
-    if not pool:
-        return 0
-    patched = 0
-    for write_offset, item_id, pack_fmt in _scan_loot_events(rom, include_ballista):
-        new_id = random.choice(pool)
-        if new_id != item_id:
-            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
-            patched += 1
-    return patched
-
-
-def randomize_loot(rom, config):
-    """Randomize loot items from all GiveItem events.
-
-    Two modes controlled by ``loot_randomization.mode``:
-      * ``'shuffle'`` — collect all items, permute them, redistribute.
-      * ``'random'`` — each item replaced with a random eligible item.
-    """
-    rules = config.get('loot_randomization', {})
+def randomize_weapon_stats(rom: ROM, config: dict) -> None:
+    rules = config.get('weapon_randomization', {})
     if not rules.get('enabled', False):
-        return 0
-    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-    mode = rules.get('mode', 'random')
-    if mode == 'shuffle':
-        return _shuffle_loot(rom, include_ballista)
-    return _randomize_loot(rom, include_ballista)
+        return
 
-
-def randomize_event_items(rom, config, modified_pids):
-    """Randomize items given via GiveItem event commands in chapter data.
-    
-    Replaces weapon items with random weapons from the pools. Non-weapon items
-    (vulneraries, keys, promo items) are left as-is. Skips story-exclusive
-    and monster-blocked items.
-    """
     include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-    weapon_pools = build_weapon_pools(rom, include_ballista)
-    data = rom.data
+    mean = rules.get('mean', None)
+    global_stddev = rules.get('stddev', 5)
+
+    stats_to_randomize = []
+    for stat_name in ('might', 'hit', 'weight', 'crit'):
+        setting = rules.get(stat_name, True)
+        if not setting:
+            continue
+        if setting is True:
+            setting = 'random'
+        stat_stddev = rules.get(f'{stat_name}_stddev', global_stddev)
+        stats_to_randomize.append((stat_name, setting, stat_stddev))
+
+    if not stats_to_randomize:
+        return
+
     patched = 0
+    bounds = {
+        'might': (rules.get('min_might', 1), rules.get('max_might', 20)),
+        'hit': (rules.get('min_hit', 30), rules.get('max_hit', 120)),
+        'weight': (rules.get('min_weight', 1), rules.get('max_weight', 20)),
+        'crit': (rules.get('min_crit', 0), rules.get('max_crit', 30)),
+    }
+    offsets = {'might': 0x15, 'hit': 0x16, 'weight': 0x17, 'crit': 0x18}
 
-    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
+    item_table_off = rom_offset(ITEM_TABLE_ADDR)
+    data_len = len(rom.data)
+
+    for item_id in range(256):
+        off = item_table_off + item_id * ITEM_DATA_SIZE
+        if off + ITEM_DATA_SIZE > data_len:
+            break
+        raw = rom.data[off:off + ITEM_DATA_SIZE]
+        stored_id = raw[6]
+        wep_type = raw[7]
+
+        if stored_id != item_id or wep_type > 7:
+            continue
         if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
             continue
         if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
-
-        idd = ItemData(rom, item_id)
-        if not idd.is_weapon():
+        if raw[0x14] == 0:
             continue
 
-        candidates = []
-        for t in range(8):
-            if weapon_pools[t]:
-                for wid, rank in weapon_pools[t]:
-                    candidates.append(wid)
-        if not candidates:
-            continue
+        for stat_name, setting, stat_stddev in stats_to_randomize:
+            lo, hi = bounds[stat_name]
+            orig = raw[offsets[stat_name]]
+            if stat_name == 'might' and wep_type == 4:
+                continue
+            if setting == 'random':
+                new_val = _randomize_stat(orig, mean, stat_stddev, lo, hi)
+                rom.write_u8(off + offsets[stat_name], new_val)
+                patched += 1
+            elif isinstance(setting, (int, float)):
+                new_val = _scale_stat(orig, float(setting), lo, hi)
+                rom.write_u8(off + offsets[stat_name], new_val)
+                patched += 1
 
-        new_item_id = random.choice(candidates)
-        if new_item_id != item_id:
-            struct.pack_into(pack_fmt, data, write_offset, new_item_id)
+    if patched:
+        _vprint(f"Randomized stats for {patched} weapon item(s)")
+
+
+def randomize_weapon_effects(rom: ROM, config: dict) -> None:
+    rules = config.get('weapon_effects', {})
+    chance = rules.get('enabled', False)
+    if not chance:
+        return
+
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+
+    effect_map = {
+        'poison': 0x01, 'nosferatu': 0x02, 'eclipse': 0x03,
+        'devil': 0x04, 'stone': 0x05,
+    }
+
+    effect_ids = []
+    weights = []
+    for name, eid in effect_map.items():
+        val = rules.get(name, True)
+        if val is False:
+            continue
+        if val is True:
+            w = 1
+        elif isinstance(val, (int, float)):
+            w = float(val)
+        else:
+            continue
+        if w <= 0:
+            continue
+        effect_ids.append(eid)
+        weights.append(w)
+
+    if not effect_ids:
+        return
+
+    patched = 0
+    item_table_off = rom_offset(ITEM_TABLE_ADDR)
+    data_len = len(rom.data)
+
+    for item_id in range(256):
+        off = item_table_off + item_id * ITEM_DATA_SIZE
+        if off + ITEM_DATA_SIZE > data_len:
+            break
+        raw = rom.data[off:off + ITEM_DATA_SIZE]
+        stored_id = raw[6]
+        wep_type = raw[7]
+
+        if stored_id != item_id or wep_type > 7:
+            continue
+        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if not include_ballista and item_id in BALLISTA_ITEM_IDS:
+            continue
+        if raw[0x14] == 0:
+            continue
+        if random.randint(1, 100) <= chance:
+            eff = random.choices(effect_ids, weights=weights, k=1)[0]
+            rom.write_u8(off + 0x1F, eff)
             patched += 1
 
-    return patched
+    if patched:
+        _vprint(f"Applied weapon effects to {patched} item(s)")
 
 
-def _shuffle_unit_items(rom):
-    """Shuffle all non-zero weapon items across UD arrays.
-    
-    Collects all weapon items from UD arrays, permutes them, and writes back.
-    Non-weapon items and empty slots are preserved in place.
-    Manakete inventories are excluded from shuffle (keep dragonstone).
-    """
-    data = rom.data
-    items_by_entry = []
+# ---------------------------------------------------------------------------
+# Item randomization (UD array items)
+# ---------------------------------------------------------------------------
 
-    for ud_offset, count in _scan_ud_arrays(rom):
-        arr_pos = ud_offset
-        for entry_idx in range(count):
-            if arr_pos + UNIT_DEF_SIZE > len(data):
-                break
-            chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
-            char_idx = chunk[0]
-            if char_idx == 0 or char_idx > 114:
-                arr_pos += UNIT_DEF_SIZE
-                continue
-            cd = CharacterData(rom, char_idx)
-            is_manakete = cd.jidDefault in MANAKETE_JIDS
-            if not is_manakete:
-                for slot_idx in range(4):
-                    item_id = data[arr_pos + 12 + slot_idx]
-                    if item_id != 0:
-                        idd = ItemData(rom, item_id)
-                        if idd.is_weapon():
-                            items_by_entry.append((arr_pos, slot_idx, item_id))
-            arr_pos += UNIT_DEF_SIZE
-
-    if len(items_by_entry) < 2:
-        return 0
-
-    shuffled_ids = [it[2] for it in items_by_entry]
-    random.shuffle(shuffled_ids)
-
-    for (arr_pos, slot_idx, _), new_id in zip(items_by_entry, shuffled_ids):
-        data[arr_pos + 12 + slot_idx] = new_id
-
-    return len(items_by_entry)
-
-
-def _fix_prf_weapon_types(rom, modified_pids):
-    """Change prf weapon types and set character lock ability.
-
-    Rapier (0x09) and Sieglinde (0x85) get their weapon_type changed to
-    a type Eirika's new class can wield. Reginleif (0x78) and Siegmund
-    (0x92) get the same treatment for Ephraim's new class. Also sets
-    the character lock Ability 4 byte (offset 0x21) to 0x0A (10 for
-    Eirika) or 0x14 (20 for Ephraim), so the weapons check PID instead
-    of class. Character lock is set unconditionally for randomized
-    characters; weapon_type is only changed when the new class has at
-    least one weapon proficiency. Prefers keeping the original type if
-    still usable; otherwise picks the first available type.
-
-    Also copies the lord-class attribute lock bits (offset 0x28 in
-    ClassData) into the character's PersonalInfo attributes, so the
-    character can equip items with the corresponding Ability 4 lock
-    regardless of their current class.
-    """
-    # Attribute bit masks from the lord classes' ClassData:
-    #   Eirika Lord (JID 2): bits 13 (0x2000), 17 (0x20000), 28 (0x10000000)
-    #   Ephraim Lord (JID 1): bits 13 (0x2000), 29 (0x20000000)
-    # Bits 17+28 (0x10020000) are the Eirika Lock; bit 29 (0x20000000) is Ephraim Lock.
-    CHAR_LOCK_ATTRS = {
-        PID.EIRIKA: (0x0A, 0x10020000, [0x09, 0x85]),
-        PID.EPHRAIM: (0x14, 0x20000000, [0x78, 0x92]),
-    }
-    for pid, (ability_val, lock_attrs, item_ids) in CHAR_LOCK_ATTRS.items():
-        if pid not in modified_pids:
-            continue
-        # Set character attribute bits so the character retains lock regardless of class
-        char_off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
-        cur_attrs = struct.unpack_from('<I', rom.data, char_off + 0x28)[0]
-        if not (cur_attrs & lock_attrs):
-            struct.pack_into('<I', rom.data, char_off + 0x28, cur_attrs | lock_attrs)
-        cd = CharacterData(rom, pid)
-        jd = ClassData(rom, cd.jidDefault)
-        usable = [i for i in range(8) if jd.baseWexp[i] > 0]
-        for item_id in item_ids:
-            off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
-            if off + ITEM_DATA_SIZE > len(rom.data):
-                continue
-            rom.data[off + 0x21] = ability_val
-            if usable:
-                orig_type = 0 if pid == PID.EIRIKA else 1
-                new_type = orig_type if orig_type in usable else usable[0]
-                rom.data[off + 7] = new_type
-
-
-def _ensure_chapter_combat_weapons(rom, config):
-    """Post-processing: ensure Seth (PID 2, ch0/ch4) and Natasha (PID 13, ch4)
-    have an equippable combat weapon (sword/lance/axe/bow/anima/light/dark) in
-    every UD array entry for those chapters.
-
-    Runs unconditionally at the very end to prevent cutscene crashes — Seth
-    attacks in the ch0 opening cutscene, and Natasha is attacked in the ch4
-    opening cutscene. If a unit has only staves or empty slots, a combat weapon
-    is forced into the first replaceable slot.
-    """
-    import struct
-    combat_types = {0, 1, 2, 3, 5, 6, 7}  # sword, lance, axe, bow, anima, light, dark
-    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-    weapon_pools = build_weapon_pools(rom, include_ballista)
-    data = rom.data
-    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
-    fixed = 0
-
-    # Prologue cutscene combat uses a hardcoded UD array not found in chapter event data.
-    # Patch it directly so Seth has a weapon for the opening cutscene battle animation.
-    CUTSCENE_UD_ARRAY = 0x088B3F68
-    cutscene_off = CUTSCENE_UD_ARRAY - ROM_BASE
-    fixed += _patch_ud_combat_weapons(rom, cutscene_off, {2}, weapon_pools, combat_types)
-
-    # chapter -> set of PIDs to enforce
-    targets = {0: {2}, 4: {2, 13}}
-    seen_arrays = set()
-
-    for ch, pids in targets.items():
-        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
-
-        map_event_data_id = data[ch_off + 0x74]
-        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
-        event_data_off = event_data_ptr - ROM_BASE
-
-        gmap_event_id = data[ch_off + 0x75]
-        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
-        gmap_off = gmap_ptr - ROM_BASE
-
-        # Direct UD pointers in event data
-        for off in range(0, 0x400, 4):
-            val = struct.unpack_from('<I', data, event_data_off + off)[0]
-            if val in seen_arrays:
-                continue
-            ud_offset = val - ROM_BASE
-            if _ud_array_at_lenient(rom, ud_offset) > 0:
-                seen_arrays.add(val)
-                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
-
-        # GMap UD arrays
-        for off in range(0, 0x200, 4):
-            val = struct.unpack_from('<I', data, gmap_off + off)[0]
-            if val in seen_arrays:
-                continue
-            ud_offset = val - ROM_BASE
-            if _ud_array_at_lenient(rom, ud_offset) > 0:
-                seen_arrays.add(val)
-                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
-
-    return fixed
-
-
-def _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types):
-    """For each UD entry matching a target PID, ensure at least one equippable
-    combat weapon. Returns count of entries fixed."""
-    data = rom.data
-    fixed = 0
-    arr_pos = ud_offset
-
-    while arr_pos + UNIT_DEF_SIZE <= len(data):
-        chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
-        if all(b == 0 for b in chunk):
-            break
-        char_idx = chunk[0]
-        if char_idx not in pids:
-            arr_pos += UNIT_DEF_SIZE
-            continue
-
-        cd = CharacterData(rom, char_idx)
-        items = list(chunk[12:16])
-        has_combat = False
-        replace_slots = []
-
-        for slot_idx in range(4):
-            item_id = items[slot_idx]
-            if item_id == 0:
-                replace_slots.append(slot_idx)
-                continue
-            idd = ItemData(rom, item_id)
-            if idd.is_weapon():
-                if idd.weapon_type in combat_types and cd.baseWexp[idd.weapon_type] > 0:
-                    has_combat = True
-                    break
-                # Staff or unwieldable weapon — candidate for replacement
-                replace_slots.append(slot_idx)
-
-        if not has_combat and replace_slots:
-            # Zero out staff proficiency so _pick_weapon_for_type doesn't return a staff
-            combat_ranks = [cd.baseWexp[t] if t != 4 else 0 for t in range(8)]
-            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
-            if new_id is None:
-                # Fall back to any non-staff type even if not proficient
-                combat_ranks = [1 if t != 4 else 0 for t in range(8)]
-                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
-            if new_id is not None:
-                data[arr_pos + 12 + replace_slots[0]] = new_id
-                fixed += 1
-
-        arr_pos += UNIT_DEF_SIZE
-
-    return fixed
-
-
-def randomize_unit_items(rom, config, modified_pids):
-    """Assign random weapons matching each unit's new class in all UnitDefinition arrays."""
-    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-    weapon_pools = build_weapon_pools(rom, include_ballista)
-
+def randomize_unit_items(rom: ROM, config: dict, modified_pids: Set[int],
+                         weapon_pools: dict, ud_arrays: List[Tuple[int, int]]) -> int:
     data = rom.data
     total_patched = 0
 
-    for ud_offset, _ in _scan_ud_arrays(rom):
+    for ud_offset, _ in ud_arrays:
         patched = 0
         arr_pos = ud_offset
         while arr_pos + UNIT_DEF_SIZE <= len(data):
@@ -1452,8 +1144,6 @@ def randomize_unit_items(rom, config, modified_pids):
                 continue
 
             cd = CharacterData(rom, char_idx)
-            jd = ClassData(rom, cd.jidDefault)
-
             old_items = list(chunk[12:16])
             new_items = list(old_items)
 
@@ -1499,158 +1189,207 @@ def randomize_unit_items(rom, config, modified_pids):
     return total_patched
 
 
-def randomize_weapon_stats(rom, config):
-    rules = config.get('weapon_randomization', {})
-    if not rules.get('enabled', False):
-        return
+def _shuffle_unit_items(rom: ROM, ud_arrays: List[Tuple[int, int]]) -> int:
+    data = rom.data
+    items_by_entry = []
 
-    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-
-    mean = rules.get('mean', None)
-    global_stddev = rules.get('stddev', 5)
-
-    stats_to_randomize = []
-    for stat_name in ('might', 'hit', 'weight', 'crit'):
-        setting = rules.get(stat_name, True)
-        if not setting:
-            continue
-        if setting is True:
-            setting = 'random'
-        stat_stddev = rules.get(f'{stat_name}_stddev', global_stddev)
-        stats_to_randomize.append((stat_name, setting, stat_stddev))
-
-    if not stats_to_randomize:
-        return
-
-    patched = 0
-
-    bounds = {
-        'might': (rules.get('min_might', 1), rules.get('max_might', 20)),
-        'hit': (rules.get('min_hit', 30), rules.get('max_hit', 120)),
-        'weight': (rules.get('min_weight', 1), rules.get('max_weight', 20)),
-        'crit': (rules.get('min_crit', 0), rules.get('max_crit', 30)),
-    }
-
-    offsets = {'might': 0x15, 'hit': 0x16, 'weight': 0x17, 'crit': 0x18}
-
-    for item_id in range(256):
-        off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
-        if off + ITEM_DATA_SIZE > len(rom.data):
-            break
-        raw = rom.data[off:off + ITEM_DATA_SIZE]
-        stored_id = raw[6]
-        wep_type = raw[7]
-
-        if stored_id != item_id:
-            continue
-        if wep_type > 7:
-            continue
-        if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
-            continue
-        if not include_ballista and item_id in BALLISTA_ITEM_IDS:
-            continue
-        if raw[0x14] == 0:
-            continue
-
-        for stat_name, setting, stat_stddev in stats_to_randomize:
-            lo, hi = bounds[stat_name]
-            orig = raw[offsets[stat_name]]
-            if stat_name == 'might' and wep_type == 4:
+    for ud_offset, count in ud_arrays:
+        arr_pos = ud_offset
+        for entry_idx in range(count):
+            if arr_pos + UNIT_DEF_SIZE > len(data):
+                break
+            chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+            char_idx = chunk[0]
+            if char_idx == 0 or char_idx > 114:
+                arr_pos += UNIT_DEF_SIZE
                 continue
-            if setting == 'random':
-                new_val = _randomize_stat(orig, mean, stat_stddev, lo, hi)
-                rom.write_u8(off + offsets[stat_name], new_val)
-                patched += 1
-            elif isinstance(setting, (int, float)):
-                new_val = _scale_stat(orig, float(setting), lo, hi)
-                rom.write_u8(off + offsets[stat_name], new_val)
-                patched += 1
+            cd = CharacterData(rom, char_idx)
+            is_manakete = cd.jidDefault in MANAKETE_JIDS
+            if not is_manakete:
+                for slot_idx in range(4):
+                    item_id = data[arr_pos + 12 + slot_idx]
+                    if item_id != 0:
+                        idd = ItemData(rom, item_id)
+                        if idd.is_weapon():
+                            items_by_entry.append((arr_pos, slot_idx, item_id))
+            arr_pos += UNIT_DEF_SIZE
+
+    if len(items_by_entry) < 2:
+        return 0
+
+    shuffled_ids = [it[2] for it in items_by_entry]
+    random.shuffle(shuffled_ids)
+
+    for (arr_pos, slot_idx, _), new_id in zip(items_by_entry, shuffled_ids):
+        data[arr_pos + 12 + slot_idx] = new_id
+
+    return len(items_by_entry)
 
 
-    if patched:
-        print(f"Randomized stats for {patched} weapon item(s)")
+# ---------------------------------------------------------------------------
+# Prf weapon type fix
+# ---------------------------------------------------------------------------
+
+def _fix_prf_weapon_types(rom: ROM, modified_pids: Set[int]) -> None:
+    for pid, (ability_val, lock_attrs, item_ids) in CHAR_LOCK_ATTRS.items():
+        if pid not in modified_pids:
+            continue
+        char_off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        cur_attrs = _U32.unpack_from(rom.data, char_off + 0x28)[0]
+        if not (cur_attrs & lock_attrs):
+            _U32.pack_into(rom.data, char_off + 0x28, cur_attrs | lock_attrs)
+        cd = CharacterData(rom, pid)
+        jd = ClassData(rom, cd.jidDefault)
+        usable = [i for i in range(8) if jd.baseWexp[i] > 0]
+        for item_id in item_ids:
+            off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+            if off + ITEM_DATA_SIZE > len(rom.data):
+                continue
+            rom.data[off + 0x21] = ability_val
+            if usable:
+                orig_type = 0 if pid == PID.EIRIKA else 1
+                new_type = orig_type if orig_type in usable else usable[0]
+                rom.data[off + 7] = new_type
 
 
-def randomize_weapon_effects(rom, config):
-    rules = config.get('weapon_effects', {})
-    chance = rules.get('enabled', False)
-    if not chance:
-        return
+# ---------------------------------------------------------------------------
+# Event items
+# ---------------------------------------------------------------------------
 
+def randomize_event_items(rom: ROM, config: dict, modified_pids: Set[int],
+                          weapon_pools: dict) -> int:
     include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-
-    effect_map = {
-        'poison': 0x01,
-        'nosferatu': 0x02,
-        'eclipse': 0x03,
-        'devil': 0x04,
-        'stone': 0x05,
-    }
-
-    effect_ids = []
-    weights = []
-    for name, eid in effect_map.items():
-        val = rules.get(name, True)
-        if val is False:
-            continue
-        if val is True:
-            w = 1
-        elif isinstance(val, (int, float)):
-            w = float(val)
-        else:
-            continue
-        if w <= 0:
-            continue
-        effect_ids.append(eid)
-        weights.append(w)
-
-    if not effect_ids:
-        return
-
+    data = rom.data
+    giveitem_events = _scan_giveitem_events(data, len(data))
     patched = 0
-    for item_id in range(256):
-        off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
-        if off + ITEM_DATA_SIZE > len(rom.data):
-            break
-        raw = rom.data[off:off + ITEM_DATA_SIZE]
-        stored_id = raw[6]
-        wep_type = raw[7]
 
-        if stored_id != item_id:
-            continue
-        if wep_type > 7:
-            continue
+    for write_offset, item_id, pack_fmt in giveitem_events:
         if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
             continue
         if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
-        if raw[0x14] == 0:
 
+        idd = ItemData(rom, item_id)
+        if not idd.is_weapon():
             continue
-        if random.randint(1, 100) <= chance:
-            eff = random.choices(effect_ids, weights=weights, k=1)[0]
-            rom.write_u8(off + 0x1F, eff)
+
+        candidates = []
+        for t in range(8):
+            if weapon_pools[t]:
+                for wid, rank in weapon_pools[t]:
+                    candidates.append(wid)
+        if not candidates:
+            continue
+
+        new_item_id = random.choice(candidates)
+        if new_item_id != item_id:
+            struct.pack_into(pack_fmt, data, write_offset, new_item_id)
             patched += 1
 
-    if patched:
-        print(f"Applied weapon effects to {patched} item(s)")
+    return patched
 
 
-def randomize_promotion_items(rom, config):
-    """Make all promotion items behave as Master Seal, usable by all classes.
-    Replaces items 0x62-0x68 in UD arrays with Master Seals."""
+# ---------------------------------------------------------------------------
+# Loot
+# ---------------------------------------------------------------------------
+
+def _randomize_loot(rom: ROM, giveitem_events: List[Tuple[int, int, str]],
+                    include_ballista: bool = False) -> int:
+    pool = _build_loot_pool(include_ballista)
+    if not pool:
+        return 0
+    patched = 0
+    for write_offset, item_id, pack_fmt in _scan_loot_events(rom, giveitem_events, include_ballista):
+        new_id = random.choice(pool)
+        if new_id != item_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+            patched += 1
+    return patched
+
+
+def _shuffle_loot(rom: ROM, giveitem_events: List[Tuple[int, int, str]],
+                  include_ballista: bool = False) -> int:
+    items = _scan_loot_events(rom, giveitem_events, include_ballista)
+    if len(items) < 2:
+        return 0
+    shuffled_ids = [item_id for _, item_id, _ in items]
+    random.shuffle(shuffled_ids)
+    for (write_offset, _, pack_fmt), new_id in zip(items, shuffled_ids):
+        cur = struct.unpack_from(pack_fmt, rom.data, write_offset)[0]
+        if cur != new_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+    return len(items)
+
+
+def randomize_loot(rom: ROM, config: dict,
+                   giveitem_events: List[Tuple[int, int, str]]) -> int:
+    rules = config.get('loot_randomization', {})
+    if not rules.get('enabled', False):
+        return 0
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    mode = rules.get('mode', 'random')
+    if mode == 'shuffle':
+        return _shuffle_loot(rom, giveitem_events, include_ballista)
+    return _randomize_loot(rom, giveitem_events, include_ballista)
+
+
+def _randomize_chest(rom: ROM, chest_items: List[Tuple[int, int, str]],
+                     include_ballista: bool = False) -> int:
+    pool = [i for i in _build_loot_pool(include_ballista) if i != 0x77]
+    if not pool:
+        return 0
+    patched = 0
+    for write_offset, item_id, pack_fmt in chest_items:
+        new_id = random.choice(pool)
+        if new_id != item_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+            patched += 1
+    return patched
+
+
+def _shuffle_chest(rom: ROM, chest_items: List[Tuple[int, int, str]],
+                   include_ballista: bool = False) -> int:
+    if len(chest_items) < 2:
+        return 0
+    shuffled_ids = [item_id for _, item_id, _ in chest_items]
+    random.shuffle(shuffled_ids)
+    for (write_offset, _, pack_fmt), new_id in zip(chest_items, shuffled_ids):
+        cur = struct.unpack_from(pack_fmt, rom.data, write_offset)[0]
+        if cur != new_id:
+            struct.pack_into(pack_fmt, rom.data, write_offset, new_id)
+    return len(chest_items)
+
+
+def randomize_chest(rom: ROM, config: dict) -> int:
+    rules = config.get('loot_randomization', {})
+    if not rules.get('enabled', False):
+        return 0
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    chest_items = _scan_chest_items(rom)
+    if not chest_items:
+        return 0
+    mode = rules.get('mode', 'random')
+    if mode == 'shuffle':
+        return _shuffle_chest(rom, chest_items, include_ballista)
+    return _randomize_chest(rom, chest_items, include_ballista)
+
+
+# ---------------------------------------------------------------------------
+# Promotion items
+# ---------------------------------------------------------------------------
+
+def randomize_promotion_items(rom: ROM, config: dict,
+                              ud_arrays: List[Tuple[int, int]]) -> int:
     rules = config.get('promotion_items', {})
     if not rules.get('enabled', True):
         return 0
 
-    import struct
     data = rom.data
     total = 0
-
     master_seal_table_addr = PROMO_ITEM_TABLES[MASTER_SEAL_ITEM_ID]
 
     if rules.get('master_seal_universal', True):
-        # Phase 1: Zero out item-specific permission tables for non-Master Seal items
+        # Phase 1: Zero out non-MS permission tables
         for item_id, table_addr in PROMO_ITEM_TABLES.items():
             if item_id == MASTER_SEAL_ITEM_ID:
                 continue
@@ -1658,11 +1397,8 @@ def randomize_promotion_items(rom, config):
             data[off:off + 0x41] = bytes(0x41)
             total += 1
 
-        # Phase 2: Fill ALL promotion item byte-per-class tables (0x41 bytes, classes 0-64).
-        # Previously only filled Master Seal (0x88); now also fills items 0x64-0x68 so
-        # FE Builder (which reads these tables directly) sees universal permissions.
+        # Phase 2: Fill ALL promotion item byte-per-class tables
         MAX_TABLE_CLS = 0x40
-        from fe8rom import CharacterData, ClassData
         for item_id, table_addr in PROMO_ITEM_TABLES.items():
             if item_id not in PROMOTION_ITEM_IDS:
                 continue
@@ -1672,10 +1408,7 @@ def randomize_promotion_items(rom, config):
                 try:
                     cd = ClassData(rom, cls)
                     promo_jid = cd.jidPromotion
-                    if promo_jid > 0 and promo_jid != cls:
-                        byte_val = promo_jid + 1
-                    else:
-                        byte_val = 0x01
+                    byte_val = promo_jid + 1 if promo_jid > 0 and promo_jid != cls else 0x01
                 except Exception:
                     byte_val = 0x01
                 pos = tbl_off + cls
@@ -1683,39 +1416,26 @@ def randomize_promotion_items(rom, config):
                     data[pos] = byte_val
         total += 1
 
-        # Phase 3: Route items 0x64-0x68 to use 0x088ADF76 via function table
-        # Entries 2-6 (items 0x64-0x68) keep their ORIGINAL handler addresses so
-        # FE Builder can trace them to their handler literals (redirected in Phase 5
-        # from old byte-per-class tables to 0x088ADF76).
-        # Entries 0-1 (items 0x62-0x63, not promotion items) still redirect to
-        # Master Seal stub for backward compatibility.
+        # Phase 3: Route non-promo items to MS stub
         ft_off = rom_offset(PROMO_FUNCTION_TABLE_ADDR)
-        ms_stub_addr = struct.unpack_from('<I', data, ft_off + 7 * 4)[0]
+        ms_stub_addr = _U32.unpack_from(data, ft_off + 7 * 4)[0]
         for i in range(7):
             item_id = 0x62 + i
             if item_id in PROMOTION_ITEM_IDS:
-                # Keep original handler address — FE Builder traces it to its literal
                 continue
-            else:
-                struct.pack_into('<I', data, ft_off + i * 4, ms_stub_addr)
+            _U32.pack_into(data, ft_off + i * 4, ms_stub_addr)
             total += 1
 
-        # Phase 4: Modify class-specific tables so Master Seal works for classes 0-19
-        # Each class table is 0x41 (65) bytes, indexed by item_id
-        # Class 20 is excluded because its table overflows into the pointer table at 0x0880D270
+        # Phase 4: Modify class-specific tables
         for cls in range(20):
             table_addr = PROMO_CLASS_TABLE_BASE + cls * 0x41
-            # Get the class's standard promotion JID from ClassData
             if cls == 0:
-                # NONE class - no promotion
                 promo_jid = 0
             else:
                 try:
-                    cd = ClassData(rom, cls)
-                    promo_jid = cd.jidPromotion
+                    promo_jid = ClassData(rom, cls).jidPromotion
                 except Exception:
                     promo_jid = 0
-
             off = rom_offset(table_addr)
             byte_val = promo_jid + 1 if promo_jid > 0 and promo_jid != cls else 0x01
             for item_id in [MASTER_SEAL_ITEM_ID] + sorted(PROMOTION_ITEM_IDS):
@@ -1724,47 +1444,26 @@ def randomize_promotion_items(rom, config):
                 data[off + item_id] = byte_val
             total += 1
 
-        # Phase 4b: Redirect class 20's handler to use Master Seal's item-specific table
-        # Class 20's class-specific table at 0x0880D22F cannot hold item_ids > 0x40 (overflows)
-        # Instead, reroute to Master Seal's handler which reads from 0x0880CA0F[class_id]
+        # Phase 4b: Redirect class 20
         cf_off = rom_offset(PROMO_CLASS_FUNCTION_TABLE)
-        struct.pack_into('<I', data, cf_off + 20 * 4, ms_stub_addr)
+        _U32.pack_into(data, cf_off + 20 * 4, ms_stub_addr)
         total += 1
 
-        # Phase 5: Redirect ALL use_eff handler literal pools to 0x088ADF76
-        # The main use_eff=0x2D handler at 0x080293E8 loads its table from 0x08029408.
-        # Sub-dispatch handlers at 0x080293C4 (use_eff 0x2E), 0x080293CC (use_eff 0x2F),
-        # and 0x080293D4 (use_eff 0x20) each have their own literals for old lists:
-        #   0x080293C8 → 0x088ADFA4 (item 0x98's old count-1 list)
-        #   0x080293D0 → 0x088ADFA6 (item 0x99's old count-1 list)
-        #   0x080293D8 → 0x088ADF96 (item 0x8A's old count-2 list)
-        #   0x080293E0 → 0x088ADFA3 (unused old list)
-        # Vanilla 0x08029408 → 0x088ADF9E (3-entry list: BRIGAND,PIRATE,THIEF).
-        # All redirect to the 31-entry list at 0x088ADF76.
+        # Phase 5: Redirect ALL use_eff literal pools
         ALL_UE_LITERALS = [
-            0x080291D0,  # pre-dispatch 0x98 check (LDR at 0x080291CC) - dead, overwritten by next
-            0x08029214,  # pre-dispatch 0x98/0x99 check (LDR at 0x080291D4) - actual value used
-            0x08029398,  # sub-dispatch use_eff 0x19 literal (item 0x64 old handler)
-            0x080293A0,  # sub-dispatch use_eff 0x1A literal (item 0x65 old handler)
-            0x080293A8,  # sub-dispatch use_eff 0x1B literal (item 0x66 old handler)
-            0x080293B0,  # sub-dispatch use_eff 0x1C literal (item 0x67 old handler)
-            0x080293B8,  # sub-dispatch use_eff 0x1D literal (item 0x68 old handler)
-            0x080293C8,  # use_eff 0x2E sub-dispatch literal (item 0x98 old handler)
-            0x080293D0,  # use_eff 0x2F sub-dispatch literal (item 0x99 old handler)
-            0x080293D8,  # use_eff 0x20 sub-dispatch literal (item 0x8A old handler)
-            0x080293E0,  # use_eff 0x2E/0x2F shared sub-dispatch literal
-            0x08029408,  # use_eff 0x2D main handler literal (Master Seal)
+            0x080291D0, 0x08029214, 0x08029398, 0x080293A0,
+            0x080293A8, 0x080293B0, 0x080293B8, 0x080293C8,
+            0x080293D0, 0x080293D8, 0x080293E0, 0x08029408,
         ]
         for lit_addr in ALL_UE_LITERALS:
             lit_off = rom_offset(lit_addr)
-            old_val = struct.unpack_from('<I', data, lit_off)[0]
+            old_val = _U32.unpack_from(data, lit_off)[0]
             if old_val != 0x088ADF76:
-                struct.pack_into('<I', data, lit_off, 0x088ADF76)
+                _U32.pack_into(data, lit_off, 0x088ADF76)
                 total += 1
-        print(f"  Redirected {len(ALL_UE_LITERALS)} use_eff handler literal(s) to 0x088ADF76")
+        _vprint(f"  Redirected {len(ALL_UE_LITERALS)} use_eff handler literal(s)")
 
-        # Phase 5b: Replace invalid JIDs (0x7E=126, 0x7F=127) in the 31-entry list at 0x088ADF76
-        # with lord class IDs so EPHRAIM_LORD and EIRIKA_LORD can use Master Seal.
+        # Phase 5b: Replace invalid JIDs
         UE_LIST = 0x088ADF76
         ue_off = rom_offset(UE_LIST)
         added = 0
@@ -1778,25 +1477,23 @@ def randomize_promotion_items(rom, config):
                     break
         if added:
             total += 1
-            print(f"  Replaced {added} invalid JID(s) in use_eff list with lord classes")
+            _vprint(f"  Replaced {added} invalid JID(s) in use_eff list")
 
-        print("Applied Master Seal universal promotion")
+        _vprint("Applied Master Seal universal promotion")
 
-    # Phase 6: Force use_eff=0x2D on ALL promotion items unconditionally
-    # This ensures they all go through the 0x2D handler (checks 0x088ADF76),
-    # regardless of the replace_distribution setting.
+    # Phase 6: Force use_eff=0x2D on ALL promotion items
     ms_item_off = rom_offset(ITEM_TABLE_ADDR) + MASTER_SEAL_ITEM_ID * ITEM_DATA_SIZE
     ms_use_eff = data[ms_item_off + 0x1E]
     for item_id in PROMOTION_ITEM_IDS:
         dst_off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
         data[dst_off + 0x1E] = ms_use_eff
         total += 1
-    print(f"Set use_eff=0x{ms_use_eff:02X} for {len(PROMOTION_ITEM_IDS)} promotion items")
+    _vprint(f"Set use_eff=0x{ms_use_eff:02X} for {len(PROMOTION_ITEM_IDS)} promotion items")
 
     # Phase 7: Replace promotion items in UD arrays
     if rules.get('replace_distribution', True):
         replaced = 0
-        for ud_offset, _ in _scan_ud_arrays(rom):
+        for ud_offset, _ in ud_arrays:
             arr_pos = ud_offset
             while arr_pos + UNIT_DEF_SIZE <= len(data):
                 chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
@@ -1809,57 +1506,40 @@ def randomize_promotion_items(rom, config):
                         replaced += 1
                 arr_pos += UNIT_DEF_SIZE
         if replaced:
-            print(f"Replaced {replaced} promotion item(s) with Master Seal in unit definitions")
+            _vprint(f"Replaced {replaced} promotion item(s) with Master Seal in unit definitions")
 
-        # Phase 8: Copy Master Seal's item data to other promotion items
-        # This makes items 0x62-0x68 look identical to Master Seal (same icon, name, effect)
+        # Phase 8: Copy MS data to other promo items
         ms_item_off = rom_offset(ITEM_TABLE_ADDR) + MASTER_SEAL_ITEM_ID * ITEM_DATA_SIZE
         ms_item_data = data[ms_item_off:ms_item_off + ITEM_DATA_SIZE]
 
         for item_id in PROMOTION_ITEM_IDS:
             dst_off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
-            # Copy all bytes except number field (offset 6) which must stay as the correct item ID
             for byte_idx in range(ITEM_DATA_SIZE):
                 if byte_idx == 6:
-                    continue  # preserve original number/stored_id
+                    continue
                 data[dst_off + byte_idx] = ms_item_data[byte_idx]
-            # Set number field explicitly
             data[dst_off + 6] = item_id
             total += 1
-        print(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
+        _vprint(f"Copied Master Seal item data to {len(PROMOTION_ITEM_IDS)} promotion items")
 
-        # Phase 9: Replace promotion items in GiveItem event commands
-        # Uses the expanded GiveItem scanner and replaces any promotion item
-        # with Master Seal 0x88.
+        # Phase 9: GiveItem replacement
         ev_replaced = 0
-        for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
+        for write_offset, item_id, pack_fmt in _scan_giveitem_events(data, len(data)):
             if item_id in PROMOTION_ITEM_IDS and item_id != MASTER_SEAL_ITEM_ID:
                 struct.pack_into(pack_fmt, data, write_offset, MASTER_SEAL_ITEM_ID)
                 ev_replaced += 1
         if ev_replaced:
             total += 1
-            print(f"Replaced {ev_replaced} promotion item(s) with Master Seal in GiveItem events")
+            _vprint(f"Replaced {ev_replaced} promotion item(s) with Master Seal in GiveItem events")
 
     return total
 
 
-def _parse_enemy_omit_classes(config):
-    """Convert enemy_randomization.omit_classes config list to a set of JID values."""
-    omit = set()
-    for name in config.get('enemy_randomization', {}).get('omit_classes', []):
-        name = name.upper().strip()
-        if hasattr(JID, name):
-            omit.add(getattr(JID, name))
-    return omit
+# ---------------------------------------------------------------------------
+# Enemy randomization
+# ---------------------------------------------------------------------------
 
-
-def _move_group_key(move_table_ptr):
-    """Map a moveTable[0] pointer to a movement group key.
-    
-    Classes with the same movement key can be randomized into each other
-    without terrain-traversal issues.  The user specifies the only pointers
-    that deserve special grouping — everything else is standard foot.
-    """
+def _move_group_key(move_table_ptr: int) -> str:
     FLYER_PTR = 0x0880BB96
     WATER_PTRS = {0x0880B98E, 0x0880B90C}
     MOUNTAIN_PTR = 0x0880B94D
@@ -1872,20 +1552,10 @@ def _move_group_key(move_table_ptr):
     return 'foot'
 
 
-def randomize_enemies(rom, config):
-    """Randomizes generic enemy classes and items.
-
-    Operates on two levels:
-      (A) CharacterData.jidDefault — changes the default class for every
-          non-playable PID (PID > 34).  This affects placements where the
-          UD entry has class_idx = 0.
-      (B) UD array class override bytes — directly modifies the class byte
-          in every UD entry whose PID is non-playable.  This covers the
-          per-deployment overrides that FE Builder's Unit Placer shows.
-      (C) UD array items — per-deployment weapon randomization replicating
-          the player unit mode:random logic (pick any weapon the new class
-          can actually use, rather than rank-matching).
-    """
+def randomize_enemies(rom: ROM, config: dict,
+                      ud_arrays: List[Tuple[int, int]],
+                      ch_ud_arrays: List[Tuple[int, int]],
+                      weapon_pools: Optional[dict] = None) -> int:
     rules = config.get('enemy_randomization', {})
     if not rules.get('enabled', False):
         return 0
@@ -1895,11 +1565,9 @@ def randomize_enemies(rom, config):
     include_monsters = rules.get('include_monsters', False)
     include_bosses = rules.get('include_bosses', False)
     randomize_monster_classes = rules.get('randomize_monster_classes', False)
-    omit_jids = _parse_enemy_omit_classes(config)
+    omit_jids = _parse_omit_classes(config, 'enemy_randomization')
 
-    # Determine which PIDs to process
-    pid_range = range(35, 256)
-    pid_range = [p for p in pid_range if p != FINAL_BOSS_PID]
+    pid_range = [p for p in range(35, 256) if p != FINAL_BOSS_PID]
     if not include_bosses:
         pid_range = [p for p in pid_range if p not in BOSS_PIDS]
 
@@ -1918,7 +1586,7 @@ def randomize_enemies(rom, config):
     enemy_jids -= ENEMY_EXCLUDED_JIDS
     enemy_jids -= omit_jids
 
-    # Filter out staves-only classes (Cleric, Priest, Troubadour) — they can't deal damage
+    # Filter out staves-only classes
     staves_only = set()
     for jid in enemy_jids:
         try:
@@ -1940,7 +1608,7 @@ def randomize_enemies(rom, config):
         else:
             unpromoted_pool.add(jid)
 
-    # Group by movement category (not raw pointer) so foot classes share a pool
+    # Group by movement category
     promoted_groups = {}
     for jid in promoted_pool:
         jd = ClassData(rom, jid)
@@ -1953,53 +1621,49 @@ def randomize_enemies(rom, config):
         key = _move_group_key(jd.moveTable[0])
         unpromoted_groups.setdefault(key, []).append(jid)
 
-    # Collect all UD arrays once (used by both class and item phases)
-    all_ud_offsets = set()
-    for off, _ in _scan_ud_arrays(rom):
-        all_ud_offsets.add(off)
-    for off, _ in _scan_chapter_ud_arrays(rom):
-        all_ud_offsets.add(off)
+    # Combine UD arrays
+    all_ud_offsets = list({off for off, _ in ud_arrays} | {off for off, _ in ch_ud_arrays})
 
     total = 0
 
-    # Phase A: Randomize CharacterData.jidDefault for non-playable PIDs
+    # Phase A: CharacterData.jidDefault
     if rand_classes:
+        if tqdm:
+            pbar = tqdm(total=len(pid_range), desc="Enemy classes (A)", unit="pid", leave=False)
         for pid in pid_range:
             cd = CharacterData(rom, pid)
             if cd.jidDefault == 0:
+                if tqdm: pbar.update(1)
                 continue
 
             orig_jid = cd.jidDefault
-
-            # If monsters are excluded from class randomization and orig is a monster, keep it
             if not randomize_monster_classes and (orig_jid in MONSTER_JIDS or orig_jid in EXTRA_MONSTER_JIDS):
+                if tqdm: pbar.update(1)
                 continue
 
             orig_class = ClassData(rom, orig_jid)
             is_promoted = bool(orig_class.attributes & CA_PROMOTED)
             key = _move_group_key(orig_class.moveTable[0])
-
             candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
             new_jid = random.choice(candidates)
-
             if new_jid != orig_jid:
                 rom.data[cd.offset + 5] = new_jid
                 total += 1
+            if tqdm: pbar.update(1)
+        if tqdm: pbar.close()
 
-    # Boss buffs: apply growth/stat/weapon-rank buffs to boss PIDs
+    # Boss buffs
     boss_buffs_rules = rules.get('boss_buffs', {})
     boss_growth_mode = boss_buffs_rules.get('growths', {}).get('mode', False)
     boss_stat_mode = boss_buffs_rules.get('base_stats', {}).get('mode', False)
     boss_max_ranks = boss_buffs_rules.get('max_weapon_ranks', True)
     boss_pids_in_scope = [p for p in pid_range if p in BOSS_PIDS]
     if boss_pids_in_scope and (boss_growth_mode or boss_stat_mode or boss_max_ranks):
-        S_RANK_WEXP = 251
         buff_growths = boss_buffs_rules.get('growths', {})
         buff_stats = boss_buffs_rules.get('base_stats', {})
         for pid in boss_pids_in_scope:
             cd = CharacterData(rom, pid)
 
-            # Growth rate buff
             if boss_growth_mode:
                 grow = [cd.growthHP, cd.growthPow, cd.growthSkl,
                         cd.growthSpd, cd.growthDef, cd.growthRes,
@@ -2017,7 +1681,6 @@ def randomize_enemies(rom, config):
                  cd.growthSpd, cd.growthDef, cd.growthRes,
                  cd.growthLck) = grow
 
-            # Base stat buff
             if boss_stat_mode:
                 caps = [30, 25, 25, 25, 25, 25, 30]
                 stats = [cd.baseHP, cd.basePow, cd.baseSkl, cd.baseSpd,
@@ -2035,7 +1698,6 @@ def randomize_enemies(rom, config):
                 (cd.baseHP, cd.basePow, cd.baseSkl, cd.baseSpd,
                  cd.baseDef, cd.baseRes, cd.baseLck) = stats
 
-            # Max weapon ranks: S-rank for types new class can use, zero for others
             if boss_max_ranks:
                 jd = ClassData(rom, cd.jidDefault)
                 new_ranks = list(cd.baseWexp)
@@ -2057,7 +1719,11 @@ def randomize_enemies(rom, config):
     # Phase B + C: UD array class overrides and items
     if rand_classes or rand_items:
         include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-        wep_pools = build_weapon_pools(rom, include_ballista) if rand_items else None
+        if weapon_pools is None and rand_items:
+            weapon_pools = build_weapon_pools(rom, include_ballista)
+
+        if tqdm:
+            pbar = tqdm(total=len(all_ud_offsets), desc="Enemy UD arrays (B/C)", unit="arr", leave=False)
 
         for ud_offset in all_ud_offsets:
             arr_pos = ud_offset
@@ -2067,17 +1733,13 @@ def randomize_enemies(rom, config):
                     break
 
                 pid = chunk[0]
-                if pid <= 34 or pid > 255:
-                    arr_pos += UNIT_DEF_SIZE
-                    continue
-                if pid == FINAL_BOSS_PID:  # final boss — never randomize
+                if pid <= 34 or pid > 255 or pid == FINAL_BOSS_PID:
                     arr_pos += UNIT_DEF_SIZE
                     continue
                 if pid in BOSS_PIDS and not include_bosses:
                     arr_pos += UNIT_DEF_SIZE
                     continue
 
-                # Resolve original class (override byte first, then jidDefault)
                 orig_jid = chunk[1]
                 if orig_jid == 0:
                     cd = CharacterData(rom, pid)
@@ -2086,7 +1748,6 @@ def randomize_enemies(rom, config):
                     arr_pos += UNIT_DEF_SIZE
                     continue
 
-                # Determine new class
                 new_jid = orig_jid
                 if rand_classes:
                     is_monster_orig = orig_jid in MONSTER_JIDS or orig_jid in EXTRA_MONSTER_JIDS
@@ -2096,17 +1757,13 @@ def randomize_enemies(rom, config):
                         key = _move_group_key(orig_class.moveTable[0])
                         candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
                         new_jid = random.choice(candidates)
-                    # else: keep monster class as-is
 
                 new_class = ClassData(rom, new_jid)
 
                 if rand_classes and new_jid != orig_jid:
                     rom.data[arr_pos + 1] = new_jid
 
-                # Phase C: item randomization
                 if rand_items:
-                    # If monster classes aren't being randomized and this is a
-                    # limited-pool monster, leave its original weapons untouched.
                     if not randomize_monster_classes and new_jid in MONSTER_WEAPON_POOLS:
                         arr_pos += UNIT_DEF_SIZE
                         total += 1
@@ -2122,25 +1779,21 @@ def randomize_enemies(rom, config):
                         item = ItemData(rom, item_id)
                         if not item.is_weapon():
                             continue
-
-                        # Keep weapon if new class allows this weapon type (ignore rank)
                         if new_class.baseWexp[item.weapon_type] > 0:
                             continue
 
-                        # Pick a random weapon the new class can actually use
-                        new_item_id = _pick_weapon_for_type(rom, wep_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
                         if new_item_id is not None:
                             new_items[slot_idx] = new_item_id
                         else:
                             new_items[slot_idx] = 0
 
-                    # Ensure at least one weapon exists
                     has_weapon = any(
                         ItemData(rom, it).is_weapon()
                         for it in new_items if it != 0
                     )
                     if not has_weapon:
-                        new_item_id = _pick_weapon_for_type(rom, wep_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
                         if new_item_id is not None:
                             for slot_idx in range(4):
                                 if new_items[slot_idx] == 0:
@@ -2153,23 +1806,18 @@ def randomize_enemies(rom, config):
                 total += 1
                 arr_pos += UNIT_DEF_SIZE
 
+            if tqdm: pbar.update(1)
+        if tqdm: pbar.close()
+
     return total
 
 
-def _build_base_promo_lookup(rom):
-    """Build class -> list of promotion JIDs from ALL PaletteClassTable entries.
+# ---------------------------------------------------------------------------
+# Palette mapping
+# ---------------------------------------------------------------------------
 
-    Scans slots 1-2 (base / alternative base) in every entry and correctly
-    associates promotions:
-      * Class in slot 1 → promos from slots 3-4 (primary branch), plus
-        slots 5-6 when slot 2 is empty (no secondary base).
-      * Class in slot 2 → promos from slots 5-6 (secondary branch).
-    This captures branched-promotion data from trainee entries (e.g. the
-    Journeyman_M alternative in slot 2 of Amelia's Recruit entry).
-    """
-    import struct
-    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
-    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+def _build_base_promo_lookup(rom: ROM) -> Dict[int, list]:
+    pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_cls_off = pal_cls_gba - ROM_BASE
 
     lookup = {}
@@ -2182,15 +1830,12 @@ def _build_base_promo_lookup(rom):
         p34 = [j for j in slots[3:5] if j and j != 0]
         p56 = [j for j in slots[5:7] if j and j != 0]
 
-        # Class at slot 1 (primary base) → slots 3-4 are its promos
         if s1 and s1 != 0:
             if p34:
                 lookup.setdefault(s1, []).append(p34)
-            # If slot 2 is empty, slots 5-6 also belong to slot 1
             if not s2 and p56:
                 lookup.setdefault(s1, []).append(p34 + p56 if p34 else p56)
 
-        # Class at slot 2 (secondary base) → slots 5-6 are its promos
         if s2 and s2 != 0 and p56:
             lookup.setdefault(s2, []).append(p56)
 
@@ -2199,16 +1844,12 @@ def _build_base_promo_lookup(rom):
         if len(promo_lists) == 1:
             result[base] = promo_lists[0]
         else:
-            # Take the longest list (most complete promo data)
             result[base] = max(promo_lists, key=len)
     return result
 
 
-def _build_trainee_chain_lookup(rom):
-    """Build trainee_class -> full chain [base, promo, ...] from trainee PaletteClassTable entries."""
-    import struct
-    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
-    pal_cls_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+def _build_trainee_chain_lookup(rom: ROM) -> Dict[int, list]:
+    pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_cls_off = pal_cls_gba - ROM_BASE
 
     lookup = {}
@@ -2228,42 +1869,20 @@ def _build_trainee_chain_lookup(rom):
     return result
 
 
-def randomize_palette_mappings(rom, pid_set, original_jids):
-    """Update palette class table so randomized characters keep their custom palettes.
-
-    Hybrid approach:
-      (A) Find-and-replace the character's ORIGINAL class JID with their NEW
-          class JID in all 7 slots of their PaletteClassTable entry.  This
-          preserves any existing branched-promotion structure inherited from
-          the old class.
-      (B) For the promotion slots (3-6 for base classes, 0-6 for trainees),
-          use a global lookup built from the ORIGINAL PaletteClassTable to
-          fill in promotions appropriate for the NEW class.
-      (C) The PaletteIndexTable (palette IDs) is left untouched — the
-          character keeps their palette colours.
-      (D) For characters with an all-zero PaletteIndexTable (e.g. Eirika,
-          Ephraim), borrow a donor's PaletteIndexTable entry whose
-          PaletteClassTable maps the same new class JID.
-
-    Returns the number of byte changes made.
-    """
+def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
+                               original_jids: Dict[int, int]) -> int:
     if not pid_set:
         return 0
 
-    import struct
-    from fe8rom import PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF, PALETTE_ENTRY_SIZE, ROM_BASE
-
-    pal_class_gba = struct.unpack('<I', rom.data[PALETTE_CLASS_TABLE_PTR_OFF:PALETTE_CLASS_TABLE_PTR_OFF + 4])[0]
+    pal_class_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_class_off = pal_class_gba - ROM_BASE
 
-    pal_idx_gba = struct.unpack('<I', rom.data[PALETTE_INDEX_TABLE_PTR_OFF:PALETTE_INDEX_TABLE_PTR_OFF + 4])[0]
+    pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
     pal_idx_off = pal_idx_gba - ROM_BASE
 
     base_promo_lookup = _build_base_promo_lookup(rom)
     trainee_lookup = _build_trainee_chain_lookup(rom)
 
-    # Pre-build donor lookup (before PaletteClassTable gets modified)
-    # Maps class JID -> [donor PIDs with non-zero PaletteIndexTable]
     class_to_donors = {}
     for donor_pid in range(1, 256):
         idx_off = pal_idx_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE
@@ -2294,14 +1913,12 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
         orig = list(rom.data[entry_off:entry_off + PALETTE_ENTRY_SIZE])
         new = list(orig)
 
-        # (A) Find-and-replace the character's own class JID in all slots
+        # Find-and-replace orig_jid with new_jid
         replaced_own = False
         for i in range(7):
             if new[i] == orig_jid:
                 new[i] = new_jid
                 replaced_own = True
-        # Fallback: if orig_jid wasn't found, write new_jid into the
-        # appropriate slot based on the NEW class's tier
         jd = ClassData(rom, new_jid)
         if not replaced_own:
             if new_jid in TRAINEE_JIDS:
@@ -2311,7 +1928,7 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
             else:
                 new[1] = new_jid
 
-        # (B) Remap promotion chain for the new class
+        # Remap promotion chain
         is_promoted = bool(jd.attributes & 0x100)
 
         if new_jid in TRAINEE_JIDS:
@@ -2362,11 +1979,10 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
             for i in range(5, 7):
                 new[i] = 0
 
-        # (C) Tier-crossing
+        # Tier-crossing
         try:
             orig_jd = ClassData(rom, orig_jid)
-            orig_promoted = bool(orig_jd.attributes & 0x100)
-            if orig_promoted and new[3] != new_jid:
+            if bool(orig_jd.attributes & 0x100) and new[3] != new_jid:
                 promos_for_slot3 = new[3]
                 new[3] = new_jid
                 if promos_for_slot3 and promos_for_slot3 != 0:
@@ -2387,7 +2003,7 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
                 changes += 1
         count += changes
 
-    # (D) Borrow PaletteIndexTable entries for PIDs with all-zero entries
+    # (D) Borrow PaletteIndexTable for PIDs with all-zero entries
     for pid in sorted(pid_set):
         new_jid = CharacterData(rom, pid).jidDefault
         if new_jid == 0:
@@ -2404,7 +2020,6 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
         if not donors:
             continue
 
-        # Prefer player PIDs (1-34) over generic enemies for more natural colors
         player_donors = [d for d in donors if d <= len(PLAYABLE_PLAYABLE_PIDS)]
         donor_pid = player_donors[0] if player_donors else donors[0]
 
@@ -2419,47 +2034,197 @@ def randomize_palette_mappings(rom, pid_set, original_jids):
     return count
 
 
-def _build_ud_to_chapters(rom):
-    """Build mapping: UD array file offset -> list of chapter names."""
+# ---------------------------------------------------------------------------
+# Enforce tier constraints
+# ---------------------------------------------------------------------------
+
+def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
+    unprompted_pids = {1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31}
+    trainee_pids = {7, 18, 24}
+    weapon_req_pids = {2, 13}
+
+    promoted_jids, unpromoted_jids = _split_class_pool(rom)
+    omit_jids = _parse_omit_classes(config)
+    include_soldier = config.get('class_randomization', {}).get('include_soldier', False)
+
+    promoted_jids -= omit_jids
+    unpromoted_jids -= omit_jids
+    if not include_soldier:
+        unpromoted_jids.discard(JID.SOLDIER)
+
+    unpromoted_list = sorted(unpromoted_jids)
+    trainee_list = sorted(TRAINEE_JIDS - omit_jids)
+
+    def _has_weapon(jid: int) -> bool:
+        try:
+            jd = ClassData(rom, jid)
+            return any(jd.baseWexp[t] > 0 for t in range(8) if t != 4)
+        except Exception:
+            return False
+
+    fixed = set()
+    for pid in unprompted_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if jid in TRAINEE_JIDS or jid in promoted_jids:
+            pool = [j for j in unpromoted_list if not (pid in weapon_req_pids and not _has_weapon(j))]
+            new_jid = random.choice(pool) if pool else random.choice(unpromoted_list)
+            cd.jidDefault = new_jid
+            _adjust_weapon_ranks(cd, new_jid, rom)
+            cd.write(rom)
+            fixed.add(pid)
+
+    for pid in trainee_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if jid not in TRAINEE_JIDS:
+            if not trainee_list:
+                continue
+            new_jid = random.choice(trainee_list)
+            cd.jidDefault = new_jid
+            _adjust_weapon_ranks(cd, new_jid, rom)
+            cd.write(rom)
+            fixed.add(pid)
+
+    for pid in weapon_req_pids:
+        cd = CharacterData(rom, pid)
+        jid = cd.jidDefault
+        if not _has_weapon(jid):
+            if pid in unprompted_pids:
+                pool = [j for j in unpromoted_list if _has_weapon(j)]
+            else:
+                pool = [j for j in unpromoted_list + list(promoted_jids) if _has_weapon(j)]
+            if pool:
+                new_jid = random.choice(pool)
+                cd.jidDefault = new_jid
+                _adjust_weapon_ranks(cd, new_jid, rom)
+                cd.write(rom)
+                fixed.add(pid)
+
+    return fixed
+
+
+# ---------------------------------------------------------------------------
+# Cutscene combat weapon guarantee
+# ---------------------------------------------------------------------------
+
+def _ensure_chapter_combat_weapons(rom: ROM, config: dict,
+                                    weapon_pools: dict) -> int:
+    combat_types = {0, 1, 2, 3, 5, 6, 7}
+    data = rom.data
+    asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
+    fixed = 0
+
+    # Prologue cutscene
+    cutscene_off = rom_offset(0x088B3F68)
+    fixed += _patch_ud_combat_weapons(rom, cutscene_off, {2}, weapon_pools, combat_types)
+
+    targets = {0: {2}, 4: {2, 13}}
+    seen_arrays = set()
+
+    for ch, pids in targets.items():
+        ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
+        map_event_data_id = data[ch_off + 0x74]
+        event_data_ptr = _U32.unpack_from(data, asset_off + map_event_data_id * 4)[0]
+        event_data_off = event_data_ptr - ROM_BASE
+
+        gmap_event_id = data[ch_off + 0x75]
+        gmap_ptr = _U32.unpack_from(data, asset_off + gmap_event_id * 4)[0]
+        gmap_off = gmap_ptr - ROM_BASE
+
+        for off in range(0, 0x400, 4):
+            val = _U32.unpack_from(data, event_data_off + off)[0]
+            if val in seen_arrays:
+                continue
+            ud_offset = val - ROM_BASE
+            if _ud_array_at_lenient(data, ud_offset, len(data)) > 0:
+                seen_arrays.add(val)
+                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
+
+        for off in range(0, 0x200, 4):
+            val = _U32.unpack_from(data, gmap_off + off)[0]
+            if val in seen_arrays:
+                continue
+            ud_offset = val - ROM_BASE
+            if _ud_array_at_lenient(data, ud_offset, len(data)) > 0:
+                seen_arrays.add(val)
+                fixed += _patch_ud_combat_weapons(rom, ud_offset, pids, weapon_pools, combat_types)
+
+    return fixed
+
+
+def _patch_ud_combat_weapons(rom: ROM, ud_offset: int, pids: Set[int],
+                              weapon_pools: dict, combat_types: Set[int]) -> int:
+    data = rom.data
+    fixed = 0
+    arr_pos = ud_offset
+
+    while arr_pos + UNIT_DEF_SIZE <= len(data):
+        chunk = data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+        if all(b == 0 for b in chunk):
+            break
+        char_idx = chunk[0]
+        if char_idx not in pids:
+            arr_pos += UNIT_DEF_SIZE
+            continue
+
+        cd = CharacterData(rom, char_idx)
+        items = list(chunk[12:16])
+        has_combat = False
+        replace_slots = []
+
+        for slot_idx in range(4):
+            item_id = items[slot_idx]
+            if item_id == 0:
+                replace_slots.append(slot_idx)
+                continue
+            idd = ItemData(rom, item_id)
+            if idd.is_weapon():
+                if idd.weapon_type in combat_types and cd.baseWexp[idd.weapon_type] > 0:
+                    has_combat = True
+                    break
+                replace_slots.append(slot_idx)
+
+        if not has_combat and replace_slots:
+            combat_ranks = [cd.baseWexp[t] if t != 4 else 0 for t in range(8)]
+            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            if new_id is None:
+                combat_ranks = [1 if t != 4 else 0 for t in range(8)]
+                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            if new_id is not None:
+                data[arr_pos + 12 + replace_slots[0]] = new_id
+                fixed += 1
+
+        arr_pos += UNIT_DEF_SIZE
+
+    return fixed
+
+
+# ---------------------------------------------------------------------------
+# Report generation
+# ---------------------------------------------------------------------------
+
+def _build_ud_to_chapters(rom: ROM) -> Dict[int, list]:
     data = rom.data
     asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
 
-    chapter_map = {
-        0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
-        3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
-        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: Unbroken Heart',
-        7: 'Ch6: Victims of War', 8: 'Ch7: Waterside Renvall',
-        9: 'Ch8: It\'s a Trap!', 10: 'Ch9: Distant Blade',
-        11: 'Ch10: Revolt at Carcino', 12: 'Ch11: Creeping Darkness',
-        13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
-        15: 'Ch14: Queen of White Dunes', 16: 'Ch15: Scorched Sand',
-        17: 'Ch16: Ruled by Madness', 18: 'Ch17: River of Regrets (Eri)',
-        19: 'Ch18: Two Faces of Evil (Eri)', 20: 'Ch19: Last Hope (Eri)',
-        21: 'Ch20: Darkling Woods (Eri)', 22: 'Ch20: Darkling Woods (Eri)',
-        23: 'Ch9: Fort Rigwald', 24: 'Ch10: Turning Traitor',
-        25: 'Ch11: Phantom Ship', 26: 'Ch12: Landing at Taizel',
-        27: 'Ch13: Fluorspar\'s Oath', 28: 'Ch14: Father and Son',
-        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruled by Maddness (Eph)',
-        31: 'Ch17: River of Regrets (Eph)', 32: 'Ch18: Two Faces of Evil (Eph)',
-        33: 'Ch19: Last Hope (Eph)', 34: 'Ch20: Darkling Woods (Eph)',
-    }
-
-    def is_ud_addr(addr):
+    def is_ud_addr(addr: int) -> bool:
         if addr == 0 or addr < 0x088B0000 or addr >= 0x088D0000:
             return False
         o = addr - ROM_BASE
-        if o + 20 > len(data): return False
+        if o + 20 > len(data):
+            return False
         chunk = data[o:o+20]
-        if all(b == 0 for b in chunk): return False
+        if all(b == 0 for b in chunk):
+            return False
         ci, cj = chunk[0], chunk[1]
         return ci > 0 and ci <= 114 and cj <= 114
 
-    # Index LOAD commands in event scripts
     script_to_uds = {}
     for pos in range(len(data) - 8):
         cmd = data[pos]
         if 0x40 <= cmd <= 0x43 and data[pos+1] == 0x2C:
-            ptr = struct.unpack_from('<I', data, pos+4)[0]
+            ptr = _U32.unpack_from(data, pos+4)[0]
             if 0x088B0000 <= ptr < 0x088D0000 and is_ud_addr(ptr):
                 script_to_uds.setdefault(ROM_BASE + pos, set()).add(ptr)
 
@@ -2472,36 +2237,32 @@ def _build_ud_to_chapters(rom):
     for ch in range(35):
         ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
         map_event_data_id = data[ch_off + 0x74]
-
-        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
+        event_data_ptr = _U32.unpack_from(data, asset_off + map_event_data_id * 4)[0]
         event_data_off = event_data_ptr - ROM_BASE
 
         gmap_event_id = data[ch_off + 0x75]
-        gmap_ptr = struct.unpack_from('<I', data, asset_off + gmap_event_id * 4)[0]
+        gmap_ptr = _U32.unpack_from(data, asset_off + gmap_event_id * 4)[0]
         gmap_off = gmap_ptr - ROM_BASE
 
-        chapter_name = chapter_map.get(ch, f'Ch{ch}')
-
+        chapter_name = CHAPTER_NAMES.get(ch, f'Ch{ch}')
         seen = set()
-        # Direct UD pointers in event data
+
         for off in range(0, 0x400, 4):
-            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            val = _U32.unpack_from(data, event_data_off + off)[0]
             if is_ud_addr(val) and val not in seen:
                 seen.add(val)
                 result.setdefault(val - ROM_BASE, []).append(chapter_name)
 
-        # LOAD-command referenced UDs from scripts in event data
         for off in range(0, 0x400, 4):
-            val = struct.unpack_from('<I', data, event_data_off + off)[0]
+            val = _U32.unpack_from(data, event_data_off + off)[0]
             if 0x089E0000 <= val < 0x08A00000 and val in script_to_uds:
                 for ud_addr in script_to_uds[val]:
                     if is_ud_addr(ud_addr) and ud_addr not in seen:
                         seen.add(ud_addr)
                         result.setdefault(ud_addr - ROM_BASE, []).append(chapter_name)
 
-        # GMap UD arrays
         for off in range(0, 0x200, 4):
-            val = struct.unpack_from('<I', data, gmap_off + off)[0]
+            val = _U32.unpack_from(data, gmap_off + off)[0]
             if is_ud_addr(val) and val not in seen:
                 seen.add(val)
                 result.setdefault(val - ROM_BASE, []).append(chapter_name)
@@ -2509,56 +2270,33 @@ def _build_ud_to_chapters(rom):
     return result
 
 
-def _find_chapters_for_gba_addr(rom, gba_addr):
-    """Return list of chapter names whose event data range contains gba_addr."""
+def _find_chapters_for_gba_addr(rom: ROM, gba_addr: int) -> List[str]:
     data = rom.data
     asset_off = CHAPTER_ASSET_TABLE - ROM_BASE
-
-    chapter_map = {
-        0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
-        3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
-        5: 'Ch5: Empire\'s Reach', 6: 'Ch5x: Unbroken Heart',
-        7: 'Ch6: Victims of War', 8: 'Ch7: Waterside Renvall',
-        9: 'Ch8: It\'s a Trap!', 10: 'Ch9: Distant Blade',
-        11: 'Ch10: Revolt at Carcino', 12: 'Ch11: Creeping Darkness',
-        13: 'Ch12: Village of Silence', 14: 'Ch13: Hamill Canyon',
-        15: 'Ch14: Queen of White Dunes', 16: 'Ch15: Scorched Sand',
-        17: 'Ch16: Ruled by Madness', 18: 'Ch17: River of Regrets (Eri)',
-        19: 'Ch18: Two Faces of Evil (Eri)', 20: 'Ch19: Last Hope (Eri)',
-        21: 'Ch20: Darkling Woods (Eri)', 22: 'Ch20: Darkling Woods (Eri)',
-        23: 'Ch9: Fort Rigwald', 24: 'Ch10: Turning Traitor',
-        25: 'Ch11: Phantom Ship', 26: 'Ch12: Landing at Taizel',
-        27: 'Ch13: Fluorspar\'s Oath', 28: 'Ch14: Father and Son',
-        29: 'Ch15: Scorched Sand (Eph)', 30: 'Ch16: Ruled by Maddness (Eph)',
-        31: 'Ch17: River of Regrets (Eph)', 32: 'Ch18: Two Faces of Evil (Eph)',
-        33: 'Ch19: Last Hope (Eph)', 34: 'Ch20: Darkling Woods (Eph)',
-    }
 
     ranges = []
     for ch in range(35):
         ch_off = (CHAPTER_DATA_TABLE - ROM_BASE) + ch * CHAPTER_INFO_SIZE
         map_event_data_id = data[ch_off + 0x74]
-        event_data_ptr = struct.unpack_from('<I', data, asset_off + map_event_data_id * 4)[0]
-        if event_data_ptr == 0: continue
-        name = chapter_map.get(ch, f'Ch{ch}')
+        event_data_ptr = _U32.unpack_from(data, asset_off + map_event_data_id * 4)[0]
+        if event_data_ptr == 0:
+            continue
+        name = CHAPTER_NAMES.get(ch, f'Ch{ch}')
         ranges.append((event_data_ptr, ch, name))
 
     ranges.sort()
-
     result = set()
     for i, (ptr, ch, name) in enumerate(ranges):
         end = ranges[i+1][0] if i+1 < len(ranges) else ptr + 0x400
         if ptr <= gba_addr < end:
             result.add(name)
-
     return sorted(result)
 
 
-def _write_report(orig_data, rom, config, seed, output_path):
-    """Write a .txt report of all randomization changes alongside the output ROM."""
+def _write_report(orig_data: bytearray, rom: ROM, config: dict,
+                  seed: Optional[int], output_path: Optional[str]) -> None:
     data = rom.data
 
-    # Derive .txt path from output .gba path
     if output_path and output_path.lower().endswith('.gba'):
         txt_path = output_path[:-4] + '.txt'
     else:
@@ -2570,7 +2308,6 @@ def _write_report(orig_data, rom, config, seed, output_path):
     lines.append(f'Seed: {seed}')
     lines.append('')
 
-    # --- Class changes ---
     lines.append('=== Class Changes ===')
     class_changed = 0
     for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
@@ -2589,22 +2326,46 @@ def _write_report(orig_data, rom, config, seed, output_path):
         lines.append('  (none)')
     lines.append('')
 
-    # --- Weapon effects ---
-    effect_names = {0: '(none)', 1: 'Poison', 2: 'Nosferatu', 3: 'Eclipse', 4: 'Devil', 5: 'Stone'}
+    lines.append('=== Growth Rate Totals ===')
+    growth_total_min = 999
+    growth_total_max = 0
+    growth_total_sum = 0
+    growth_total_count = 0
+    for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
+        cd = CharacterData(rom, pid)
+        total = (cd.growthHP + cd.growthPow + cd.growthSkl + cd.growthSpd
+                 + cd.growthDef + cd.growthRes + cd.growthLck)
+        pid_name = PID(pid).name if pid in PID._value2member_map_ else f'PID{pid}'
+        lines.append(f'  {pid_name:12s}: {total:3d}  (HP={cd.growthHP:3d} Pow={cd.growthPow:3d} '
+                     f'Skl={cd.growthSkl:3d} Spd={cd.growthSpd:3d} '
+                     f'Def={cd.growthDef:3d} Res={cd.growthRes:3d} Lck={cd.growthLck:3d})')
+        if total < growth_total_min:
+            growth_total_min = total
+        if total > growth_total_max:
+            growth_total_max = total
+        growth_total_sum += total
+        growth_total_count += 1
+    if growth_total_count:
+        avg = growth_total_sum / growth_total_count
+        lines.append(f'  --- Range: {growth_total_min} - {growth_total_max}  Avg: {avg:.1f} ---')
+    lines.append('')
+
     lines.append('=== Weapon Effect Changes ===')
     eff_changed = 0
     for item_id in range(256):
         off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
-        if off + ITEM_DATA_SIZE > len(data): break
+        if off + ITEM_DATA_SIZE > len(data):
+            break
         stored_id = data[off + 6]
-        if stored_id != item_id: continue
+        if stored_id != item_id:
+            continue
         orig_eff = orig_data[off + 0x1F] if off < len(orig_data) else 0
         mod_eff = data[off + 0x1F]
         if orig_eff != mod_eff:
             wep_type = data[off + 7]
             type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
-            from_name = effect_names.get(orig_eff, f'0x{orig_eff:02X}')
-            to_name = effect_names.get(mod_eff, f'0x{mod_eff:02X}')
+            from_name = EFFECT_NAMES.get(orig_eff, f'0x{orig_eff:02X}')
+            to_name = EFFECT_NAMES.get(mod_eff, f'0x{mod_eff:02X}')
             item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
             lines.append(f'  {item_name} ({type_name}): {from_name} -> {to_name}')
             eff_changed += 1
@@ -2612,10 +2373,9 @@ def _write_report(orig_data, rom, config, seed, output_path):
         lines.append('  (none)')
     lines.append('')
 
-    # --- GiveItem event item swaps ---
     lines.append('=== GiveItem Event Changes ===')
     ev_changed = 0
-    for write_offset, item_id, pack_fmt in _scan_giveitem_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_giveitem_events(data, len(data)):
         if write_offset + 4 <= len(orig_data):
             orig_item = struct.unpack_from(pack_fmt, orig_data, write_offset)[0]
             mod_item = struct.unpack_from(pack_fmt, data, write_offset)[0]
@@ -2631,10 +2391,9 @@ def _write_report(orig_data, rom, config, seed, output_path):
         lines.append('  (none)')
     lines.append('')
 
-    # --- Chest item swaps ---
     lines.append('=== Chest Item Changes ===')
     chest_changed = 0
-    for write_offset, item_id, pack_fmt in _scan_chest_events(rom):
+    for write_offset, item_id, pack_fmt in _scan_chest_items(rom):
         if write_offset + 4 <= len(orig_data):
             orig_item = struct.unpack_from(pack_fmt, orig_data, write_offset)[0]
             mod_item = struct.unpack_from(pack_fmt, data, write_offset)[0]
@@ -2650,75 +2409,93 @@ def _write_report(orig_data, rom, config, seed, output_path):
         lines.append('  (none)')
     lines.append('')
 
-    # Write file
     report_text = '\n'.join(lines)
     with open(txt_path, 'w', encoding='utf-8') as f:
         f.write(report_text)
-    print(f'Report written to {txt_path}')
+    _vprint(f'Report written to {txt_path}')
 
 
-def apply_config(rom_path, config, seed=None, output_path=None):
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def apply_config(rom_path: str, config: dict, seed: int = None,
+                 output_path: str = None, verbose: bool = False) -> str:
+    global _VERBOSE
+    _VERBOSE = verbose
+
     if seed is not None:
         random.seed(seed)
     elif 'seed' in config:
         random.seed(config['seed'])
+    _vprint("Loading ROM...")
     rom = ROM(rom_path)
 
-    # Snapshot original data for report generation
+    if tqdm:
+        _vprint("")
+
     original_data = bytearray(rom.data)
 
-    # Determine recruitment mode (pre = swap first, post = swap after class/stats)
     recruit_rules = config.get('recruitment_randomization', {})
     recruit_enabled = recruit_rules.get('enabled', False)
     recruit_mode = recruit_rules.get('mode', 'pre')
     preserve_tier = recruit_rules.get('preserve_tier', True)
+
+    # Cache scan results once
+    data = rom.data
+    rom_size = len(data)
+    _vprint("Scanning ROM structures...")
+    ud_arrays = _scan_ud_arrays(data, rom_size)
+    ch_ud_arrays = _scan_chapter_ud_arrays(data, rom_size)
+    giveitem_events = _scan_giveitem_events(data, rom_size)
+    _vprint(f"  Found {len(ud_arrays)} UD array(s), {len(ch_ud_arrays)} chapter array(s), {len(giveitem_events)} GiveItem event(s)")
+
+    include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
+    weapon_pools = build_weapon_pools(rom, include_ballista)
 
     modified_pids = set()
 
     if recruit_enabled and recruit_mode == 'pre':
         modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
 
-    # Snapshot original class JIDs before class randomization (used by palette mapping)
-    original_jids = {pid: CharacterData(rom, pid).jidDefault for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
+    original_jids = {pid: CharacterData(rom, pid).jidDefault
+                     for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
 
     class_pids = randomize_class(rom, config)
     modified_pids |= class_pids
     trainee_patched = _update_trainee_promotion_table(rom, class_pids)
     if trainee_patched:
-        print(f"Updated {trainee_patched} trainee promotion table entr(y/ies)")
+        _vprint(f"Updated {trainee_patched} trainee promotion table entr(y/ies)")
     randomize_growths(rom, config)
     randomize_base_stats(rom, config)
 
     if recruit_enabled and recruit_mode == 'post':
         modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
 
-    # Enforce class tier constraints on story-critical PID slots
     enforced_pids = _enforce_pid_tiers(rom, config)
     if enforced_pids:
         modified_pids |= enforced_pids
-        print(f"Enforced class tier constraints for {len(enforced_pids)} unit(s)")
+        _vprint(f"Enforced class tier constraints for {len(enforced_pids)} unit(s)")
 
     synchronize_promotion_gains(rom)
     randomize_affinity(rom, config)
     randomize_weapon_stats(rom, config)
     randomize_weapon_effects(rom, config)
 
-    randomize_promotion_items(rom, config)
+    randomize_promotion_items(rom, config, ud_arrays)
 
-    patched = patch_unit_definitions(rom, modified_pids)
+    patched = patch_unit_definitions(rom, modified_pids, ud_arrays)
     if patched:
-        print(f"Patched {patched} unit definition(s) to use new default classes")
+        _vprint(f"Patched {patched} unit definition(s) to use new default classes")
 
     _fix_prf_weapon_types(rom, modified_pids)
 
-    enemy_patched = randomize_enemies(rom, config)
+    enemy_patched = randomize_enemies(rom, config, ud_arrays, ch_ud_arrays, weapon_pools)
     if enemy_patched:
-        print(f"Randomized {enemy_patched} generic enemy unit(s)")
+        _vprint(f"Randomized {enemy_patched} generic enemy unit(s)")
 
-    # Sync shared-PID characters (e.g. Orson) after ALL class/enemy randomization
     _sync_shared_pid_classes(rom)
 
-    # Update palette class table so characters keep custom palettes after class changes
     class_rules = config.get('class_randomization', {})
     palette_enabled = class_rules.get('palette_mapping', True)
     if palette_enabled:
@@ -2736,33 +2513,55 @@ def apply_config(rom_path, config, seed=None, output_path=None):
             palette_pids |= BOSS_PIDS
         pal_count = randomize_palette_mappings(rom, palette_pids, original_jids)
         if pal_count:
-            print(f"Updated palette mappings for {pal_count} unit(s)")
+            _vprint(f"Updated palette mappings for {pal_count} unit(s)")
 
     item_rules = config.get('item_randomization', {})
     mode = item_rules.get('mode', 'random')
     if mode == 'shuffle':
-        shuffled = _shuffle_unit_items(rom)
+        shuffled = _shuffle_unit_items(rom, ud_arrays)
         if shuffled:
-            print(f"Shuffled {shuffled} item(s) across unit definitions")
+            _vprint(f"Shuffled {shuffled} item(s) across unit definitions")
     elif item_rules.get('enabled', True):
-        item_patched = randomize_unit_items(rom, config, modified_pids)
+        item_patched = randomize_unit_items(rom, config, modified_pids, weapon_pools, ud_arrays)
         if item_patched:
-            print(f"Randomized items for {item_patched} unit definition(s)")
+            _vprint(f"Randomized items for {item_patched} unit definition(s)")
 
     if item_rules.get('randomize_events', False) and mode != 'shuffle':
-        ev_patched = randomize_event_items(rom, config, modified_pids)
+        ev_patched = randomize_event_items(rom, config, modified_pids, weapon_pools)
         if ev_patched:
-            print(f"Randomized {ev_patched} event-given item(s)")
+            _vprint(f"Randomized {ev_patched} event-given item(s)")
 
-    loot_count = randomize_loot(rom, config)
+    loot_count = randomize_loot(rom, config, giveitem_events)
     if loot_count:
         mode_label = config.get('loot_randomization', {}).get('mode', 'random')
-        print(f"Randomized {loot_count} loot event(s) ({mode_label} mode)")
+        _vprint(f"Randomized {loot_count} loot event(s) ({mode_label} mode)")
 
-    # Post-processing: guarantee Seth (ch0/ch4) and Natasha (ch4) have combat weapons
-    ch_fixed = _ensure_chapter_combat_weapons(rom, config)
+    chest_count = randomize_chest(rom, config)
+    if chest_count:
+        mode_label = config.get('loot_randomization', {}).get('mode', 'random')
+        _vprint(f"Randomized {chest_count} chest item(s) ({mode_label} mode)")
+
+    ch_fixed = _ensure_chapter_combat_weapons(rom, config, weapon_pools)
     if ch_fixed:
-        print(f"Fixed combat weapons for {ch_fixed} cutscene-critical unit(s) in ch0/ch4")
+        _vprint(f"Fixed combat weapons for {ch_fixed} cutscene-critical unit(s) in ch0/ch4")
+
+    # Verbose-only growth total summary
+    if _VERBOSE:
+        totals = []
+        for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
+            cd = CharacterData(rom, pid)
+            t = (cd.growthHP + cd.growthPow + cd.growthSkl + cd.growthSpd
+                 + cd.growthDef + cd.growthRes + cd.growthLck)
+            totals.append(t)
+        if totals:
+            pid_name = lambda p: PID(p).name if p in PID._value2member_map_ else f'PID{p}'
+            best = max(totals)
+            worst = min(totals)
+            avg = sum(totals) / len(totals)
+            best_pid = sorted(PLAYABLE_PLAYABLE_PIDS)[totals.index(best)]
+            worst_pid = sorted(PLAYABLE_PLAYABLE_PIDS)[totals.index(worst)]
+            print(f"Growth totals: min={worst} ({pid_name(worst_pid)}), "
+                  f"max={best} ({pid_name(best_pid)}), avg={avg:.1f}")
 
     resolved_seed = seed if seed is not None else config.get('seed', None)
     _write_report(original_data, rom, config, resolved_seed, output_path)

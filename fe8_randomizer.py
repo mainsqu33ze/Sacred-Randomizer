@@ -23,8 +23,10 @@ Examples:
                         help='YAML configuration file (default: config.yaml)')
     parser.add_argument('-o', '--output',
                         help='Output ROM path (default: input_randomized.gba)')
-    parser.add_argument('--seed', type=int,
+    parser.add_argument('-s', '--seed', type=int,
                         help='Random seed for reproducible randomization')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Show detailed progress messages')
     parser.add_argument('--dump', action='store_true',
                         help='Dump current config from ROM and exit')
 
@@ -194,7 +196,8 @@ Examples:
     output = apply_config(
         args.rom, config,
         seed=args.seed,
-        output_path=args.output)
+        output_path=args.output,
+        verbose=args.verbose)
 
     print(output)
 

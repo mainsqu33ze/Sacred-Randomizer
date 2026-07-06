@@ -41,3 +41,4 @@ _analyze_pid37.py
 _check_class_data_integrity.py
 _check_event_structure.py
 _check_pid37_placement.py
+*.sav

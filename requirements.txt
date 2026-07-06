@@ -1,1 +1,2 @@
 pyyaml
+tqdm  # progress bars for long operations
