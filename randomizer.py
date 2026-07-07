@@ -18,7 +18,7 @@ from fe8rom import (
     PALETTE_INTERLEAVE_COUNT, PALETTE_SUB_SIZE, PALETTE_COLORS,
     read_palette_set, deinterleave_palette, interleave_palettes,
     write_palette_set, color_distance, pal15_to_rgb, rgb_to_pal15,
-    _U16, _U32, _EVENT_CMDS_WITH_UD,
+    swap_portrait_entries, _U16, _U32, _EVENT_CMDS_WITH_UD,
 )
 
 try:
@@ -604,6 +604,36 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     for src_pid, dst_pid in zip(pids, shuffled):
         dst_off = pal_idx_off + (dst_pid - 1) * PALETTE_ENTRY_SIZE
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[src_pid]
+
+    # Remap portrait table entries: dst_pid's portrait slot gets src_pid's
+    # original data, so the face shown matches the character who now occupies
+    # that PID slot.  Copy from saved originals instead of sequential swaps
+    # to avoid corrupting the permutation mapping.
+    from fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
+    portrait_snap = {}
+    for pid in pids:
+        slot = PID_TO_PORTRAIT_SLOT.get(pid)
+        if slot is not None:
+            off = rom_offset(PORTRAIT_TABLE_ADDR) + slot * PORTRAIT_ENTRY_SIZE
+            portrait_snap[pid] = bytearray(rom.data[off:off + PORTRAIT_ENTRY_SIZE])
+    remapped = 0
+    for src_pid, dst_pid in zip(pids, shuffled):
+        if src_pid != dst_pid and src_pid in portrait_snap and dst_pid in portrait_snap:
+            dst_slot = PID_TO_PORTRAIT_SLOT[dst_pid]
+            dst_off = rom_offset(PORTRAIT_TABLE_ADDR) + dst_slot * PORTRAIT_ENTRY_SIZE
+            rom.data[dst_off:dst_off + PORTRAIT_ENTRY_SIZE] = portrait_snap[src_pid]
+            remapped += 1
+    if remapped:
+        _vprint(f"Remapped {remapped} portrait table entr(y/ies) for recruitment shuffle")
+
+    # Restore each PID's face ID (fid at offset 6, u16) to the original PID's
+    # portrait slot index.  After the portrait remap, dst_pid's slot now holds
+    # src_pid's portrait data, so dst_pid's fid must point to dst_pid's own
+    # slot (its original value) for the UI portrait lookup to land correctly.
+    for pid in pids:
+        off = char_table_off + (pid - 1) * PINFO_SIZE
+        orig_fid = struct.unpack_from('<H', char_data[pid], 6)[0]
+        struct.pack_into('<H', rom.data, off + 6, orig_fid)
 
     remapped = _remap_trainee_table(rom)
     if remapped:

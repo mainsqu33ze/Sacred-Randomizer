@@ -5,6 +5,10 @@ from typing import List, Optional, Tuple
 # ROM constants
 ROM_BASE = 0x08000000
 
+# Portrait table base address — character portrait metadata entries
+PORTRAIT_TABLE_ADDR = 0x088ACBC4
+PORTRAIT_ENTRY_SIZE = 0x1C
+
 
 class PID(IntEnum):
     NONE = 0
@@ -41,6 +45,46 @@ class PID(IntEnum):
     JOSHUA = 32
     SYRENE = 33
     TANA = 34
+
+
+# PID → portrait table entry slot index mapping.
+# Slot n = entry at PORTRAIT_TABLE_ADDR + n * PORTRAIT_ENTRY_SIZE
+# Values derived from FEBuilder portrait table dump (entry addr offsets).
+PID_TO_PORTRAIT_SLOT = {
+    PID.EIRIKA:   0x02,
+    PID.SETH:     0x04,
+    PID.GILLIAM:  0x05,
+    PID.FRANZ:    0x06,
+    PID.MOULDER:  0x07,
+    PID.VANESSA:  0x08,
+    PID.ROSS:     0x09,
+    PID.NEIMI:    0x0A,
+    PID.COLM:     0x0C,
+    PID.GARCIA:   0x0E,
+    PID.INNES:    0x0F,
+    PID.LUTE:     0x10,
+    PID.NATASHA:  0x11,
+    PID.CORMAG:   0x13,
+    PID.EPHRAIM:  0x14,
+    PID.FORDE:    0x16,
+    PID.KYLE:     0x18,
+    PID.AMELIA:   0x19,
+    PID.ARTUR:    0x1A,
+    PID.GERIK:    0x1B,
+    PID.TETHYS:   0x1C,
+    PID.MARISA:   0x1E,
+    PID.SALEH:    0x20,
+    PID.EWAN:     0x21,
+    PID.LARACHEL: 0x22,
+    PID.DOZLA:    0x23,
+    PID.RENNAC:   0x24,
+    PID.DUESSEL:  0x25,
+    PID.MYRRH:    0x26,
+    PID.KNOLL:    0x29,
+    PID.JOSHUA:   0x2A,
+    PID.SYRENE:   0x2B,
+    PID.TANA:     0x2C,
+}
 
 
 class JID(IntEnum):
@@ -681,6 +725,24 @@ def write_palette_set(rom: ROM, palette_data: bytearray, name: str = '') -> int:
         rom.data[table_off + i] = 0
 
     return pid
+
+
+def swap_portrait_entries(rom: ROM, pid_a: int, pid_b: int) -> bool:
+    """Swap portrait table data between two PIDs. Returns True on success."""
+    slot_a = PID_TO_PORTRAIT_SLOT.get(pid_a)
+    slot_b = PID_TO_PORTRAIT_SLOT.get(pid_b)
+    if slot_a is None or slot_b is None:
+        return False
+    base_off = rom_offset(PORTRAIT_TABLE_ADDR)
+    off_a = base_off + slot_a * PORTRAIT_ENTRY_SIZE
+    off_b = base_off + slot_b * PORTRAIT_ENTRY_SIZE
+    if off_a + PORTRAIT_ENTRY_SIZE > len(rom.data) or off_b + PORTRAIT_ENTRY_SIZE > len(rom.data):
+        return False
+    tmp = bytearray(rom.data[off_a:off_a + PORTRAIT_ENTRY_SIZE])
+    rom.data[off_a:off_a + PORTRAIT_ENTRY_SIZE] = rom.data[off_b:off_b + PORTRAIT_ENTRY_SIZE]
+    rom.data[off_b:off_b + PORTRAIT_ENTRY_SIZE] = tmp
+    return True
+
 
 _EVENT_CMDS_WITH_UD = (0x40, 0x41, 0x42, 0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4)
 
