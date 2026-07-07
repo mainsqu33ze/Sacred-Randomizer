@@ -2602,6 +2602,17 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     original_data = bytearray(rom.data)
 
+    # Preserve original support data (affinity + supportInfoPtr) per PID slot
+    # so recruitment swaps don't change who supports whom.
+    saved_support = {}
+    for pid in range(1, 256):
+        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        if off + PINFO_SIZE > len(original_data):
+            break
+        affinity = original_data[off + 9]
+        support_ptr = _U32.unpack_from(original_data, off + 0x2C)[0]
+        saved_support[pid] = (affinity, support_ptr)
+
     recruit_rules = config.get('recruitment_randomization', {})
     recruit_enabled = recruit_rules.get('enabled', False)
     recruit_mode = recruit_rules.get('mode', 'pre')
@@ -2731,6 +2742,18 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     resolved_seed = seed if seed is not None else config.get('seed', None)
     _write_report(original_data, rom, config, resolved_seed, output_path)
+
+    # Restore original support data so each PID slot keeps its original
+    # support relationships and affinity regardless of randomization.
+    for pid in range(1, 256):
+        if pid not in saved_support:
+            continue
+        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        if off + PINFO_SIZE > len(rom.data):
+            break
+        orig_affinity, orig_support_ptr = saved_support[pid]
+        _U32.pack_into(rom.data, off + 0x2C, orig_support_ptr)
+        rom.data[off + 9] = orig_affinity
 
     if output_path:
         out = output_path

@@ -177,7 +177,7 @@ _CHAR_ATTRS = struct.Struct('<I')        # attributes
 _CHAR_TAIL = struct.Struct('<II')        # supportInfoPtr, _pU30
 _CLASS_BASE_VALS = struct.Struct('8b')  # class base stats
 _CLASS_MAX_VALS = struct.Struct('7b')   # class max stats
-_CLASS_GROWTHS = struct.Struct('7b')    # class growths
+_CLASS_GROWTHS = struct.Struct('7B')    # class growths (unsigned — game stores 0-255)
 _CLASS_ATTRS = struct.Struct('<I')      # class attributes
 _CLASS_MOVE_PTRS = struct.Struct('<IIIII')  # move table ptrs
 _CLASS_TAIL = struct.Struct('<III')     # terrain lookups + _pU50
@@ -619,13 +619,25 @@ def interleave_palettes(subs: list) -> bytearray:
     return result
 
 
-NEW_PALETTE_DATA_ADDR = 0x08FE3090  # 3952 bytes of free space for compressed palettes
-NEW_PALETTE_DATA_SIZE = 3952
-_NEXT_PALETTE_DATA_OFFSET = rom_offset(NEW_PALETTE_DATA_ADDR)
+_MAX_ROM_SIZE = 32 * 1024 * 1024  # 32 MB — maximum GBA ROM size
+
+
+def _cleanup_stale_palette_entries(rom: ROM) -> None:
+    """Zero out palette entries with non-4-byte-aligned data pointers."""
+    table_off = rom_offset(PALETTE_TABLE_ADDR)
+    for pid in range(1, 256):
+        off = table_off + pid * 16
+        if off + 16 > len(rom.data):
+            break
+        ptr = _U32.unpack_from(rom.data, off)[0]
+        if ptr != 0 and ptr % 4 != 0:
+            for i in range(16):
+                rom.data[off + i] = 0
 
 
 def _find_next_palette_id(rom: ROM) -> int:
     """Find the next unused palette ID (starting from 1)."""
+    _cleanup_stale_palette_entries(rom)
     table_off = rom_offset(PALETTE_TABLE_ADDR)
     for pid in range(1, 256):
         off = table_off + pid * 16
@@ -638,28 +650,29 @@ def _find_next_palette_id(rom: ROM) -> int:
 
 
 def write_palette_set(rom: ROM, palette_data: bytearray, name: str = '') -> int:
-    """Write a new 5-palette set to ROM. Returns palette ID or -1."""
+    """Write a new 5-palette set by appending to the end of the ROM.
+    Expands rom.data as needed. Returns palette ID or -1."""
     if len(palette_data) != PALETTE_SET_SIZE:
         return -1
 
-    global _NEXT_PALETTE_DATA_OFFSET
     compressed = lz77_compress(palette_data)
     needed = len(compressed)
-
-    end = _NEXT_PALETTE_DATA_OFFSET + needed
-    if end > _NEXT_PALETTE_DATA_OFFSET + NEW_PALETTE_DATA_SIZE:
-        return -1  # out of space in the new palette data zone
+    aligned = (needed + 3) & ~3  # 4-byte alignment
 
     pid = _find_next_palette_id(rom)
     if pid < 0:
         return -1
 
-    # Write compressed data
-    rom.data[_NEXT_PALETTE_DATA_OFFSET:_NEXT_PALETTE_DATA_OFFSET + needed] = compressed
-    data_gba = ROM_BASE + _NEXT_PALETTE_DATA_OFFSET
-    _NEXT_PALETTE_DATA_OFFSET = end
+    # Append compressed data at the end of the ROM
+    write_start = len(rom.data)
+    if write_start + aligned > _MAX_ROM_SIZE:
+        return -1  # out of ROM space (max 32 MB)
+    rom.data.extend(compressed)
+    if aligned > needed:
+        rom.data.extend(b'\x00' * (aligned - needed))
+    data_gba = ROM_BASE + write_start
 
-    # Write palette table entry at 0x08EF86D4+ (gap after existing entries)
+    # Write palette table entry
     table_off = rom_offset(PALETTE_TABLE_ADDR) + pid * 16
     _U32.pack_into(rom.data, table_off, data_gba)
     name_bytes = name.encode('ascii', errors='replace')[:3].ljust(3, b'\x00')
