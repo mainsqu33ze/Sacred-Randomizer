@@ -195,6 +195,12 @@ EFFECT_NAMES = {0: '(none)', 1: 'Poison', 2: 'Nosferatu', 3: 'Eclipse', 4: 'Devi
 
 S_RANK_WEXP = 251
 
+# Items with class lock (bit 12 in attributes) mapped to their allowed class JIDs.
+# Shamshir (0x0C) is the only vanilla item with this flag — restricted to Myrmidon/Swordmaster.
+CLASS_LOCKED_ITEM_RESTRICTIONS = {
+    0x0C: frozenset({JID.MYRMIDON, JID.MYRMIDON_F, JID.SWORDMASTER, JID.SWORDMASTER_F}),
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -296,7 +302,22 @@ def _get_con_rules(rules: dict, class_enabled) -> Tuple[bool, int, int, int]:
     return (is_class_random, 1, 1, rules.get('stddev', 3))
 
 
-def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int]) -> Optional[int]:
+def _is_class_locked_item(rom: ROM, item_id: int) -> bool:
+    off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+    if off + 12 > len(rom.data):
+        return False
+    attrs = _U32.unpack_from(rom.data, off + 0x08)[0]
+    return bool(attrs & 0x1000)
+
+def _filter_class_locked(rom: ROM, item_ids: List[int], class_jid: int) -> List[int]:
+    allowed_jids = CLASS_LOCKED_ITEM_RESTRICTIONS
+    return [
+        iid for iid in item_ids
+        if not _is_class_locked_item(rom, iid) or (iid in allowed_jids and class_jid in allowed_jids[iid])
+    ]
+
+def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int],
+                          class_jid: int = None) -> Optional[int]:
     candidates = []
     for t in range(8):
         if char_ranks[t] == 0 or not weapon_pools[t]:
@@ -305,6 +326,10 @@ def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int]) -
         for item_id, rank in weapon_pools[t]:
             if rank <= max_rank:
                 candidates.append(item_id)
+    if class_jid is not None:
+        filtered = _filter_class_locked(rom, candidates, class_jid)
+        if filtered:
+            return random.choice(filtered)
     return random.choice(candidates) if candidates else None
 
 
@@ -1124,10 +1149,27 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
         effect_ids.append(eid)
         weights.append(w)
 
-    if not effect_ids:
+    # Brave (attr bit 5 = 0x20) and reaver (attr bit 8 = 0x100)
+    brave_pct = 0
+    reaver_pct = 0
+    bv = rules.get('brave', 0)
+    if isinstance(bv, bool):
+        brave_pct = 100 if bv else 0
+    elif isinstance(bv, (int, float)):
+        brave_pct = float(bv)
+    rv = rules.get('reaver', 0)
+    if isinstance(rv, bool):
+        reaver_pct = 100 if rv else 0
+    elif isinstance(rv, (int, float)):
+        reaver_pct = float(rv)
+
+    has_work = bool(effect_ids) or brave_pct or reaver_pct
+    if not has_work:
         return
 
-    patched = 0
+    patched_eff = 0
+    patched_brave = 0
+    patched_reaver = 0
     item_table_off = rom_offset(ITEM_TABLE_ADDR)
     data_len = len(rom.data)
 
@@ -1147,13 +1189,34 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
             continue
         if raw[0x14] == 0:
             continue
-        if random.randint(1, 100) <= chance:
+
+        # Weapon effect ID (mutually exclusive, written to offset 0x1F)
+        if effect_ids and random.randint(1, 100) <= chance:
             eff = random.choices(effect_ids, weights=weights, k=1)[0]
             rom.write_u8(off + 0x1F, eff)
-            patched += 1
+            patched_eff += 1
 
-    if patched:
-        _vprint(f"Applied weapon effects to {patched} item(s)")
+        # Brave attribute bit 5 (0x20) at offset 0x08
+        if brave_pct and random.randint(1, 100) <= brave_pct:
+            attrs = rom.read_u32(off + 0x08)
+            rom.write_u32(off + 0x08, attrs | 0x20)
+            patched_brave += 1
+
+        # Reaver attribute bit 8 (0x100) at offset 0x08
+        if reaver_pct and random.randint(1, 100) <= reaver_pct:
+            attrs = rom.read_u32(off + 0x08)
+            rom.write_u32(off + 0x08, attrs | 0x100)
+            patched_reaver += 1
+
+    parts = []
+    if patched_eff:
+        parts.append(f"effects to {patched_eff}")
+    if patched_brave:
+        parts.append(f"brave to {patched_brave}")
+    if patched_reaver:
+        parts.append(f"reaver to {patched_reaver}")
+    if parts:
+        _vprint("Applied weapon " + ", ".join(parts) + " item(s)")
 
 
 # ---------------------------------------------------------------------------
@@ -1194,8 +1257,12 @@ def randomize_unit_items(rom: ROM, config: dict, modified_pids: Set[int],
                     if not idd.is_weapon():
                         continue
                     if cd.baseWexp[idd.weapon_type] > 0 and idd.weapon_rank <= cd.baseWexp[idd.weapon_type]:
-                        continue
-                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp)
+                        if not (idd.attributes & 0x1000):
+                            continue
+                        allowed = CLASS_LOCKED_ITEM_RESTRICTIONS.get(item_id, set())
+                        if cd.jidDefault in allowed:
+                            continue
+                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp, class_jid=cd.jidDefault)
                     if new_item_id is not None:
                         new_items[slot_idx] = new_item_id
 
@@ -1204,7 +1271,7 @@ def randomize_unit_items(rom: ROM, config: dict, modified_pids: Set[int],
                     for it in new_items if it != 0
                 )
                 if not has_weapon:
-                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp)
+                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp, class_jid=cd.jidDefault)
                     if new_item_id is not None:
                         for slot_idx in range(4):
                             if new_items[slot_idx] == 0:
@@ -1814,9 +1881,13 @@ def randomize_enemies(rom: ROM, config: dict,
                         if not item.is_weapon():
                             continue
                         if new_class.baseWexp[item.weapon_type] > 0:
-                            continue
+                            if not (item.attributes & 0x1000):
+                                continue
+                            allowed = CLASS_LOCKED_ITEM_RESTRICTIONS.get(item_id, set())
+                            if new_class.jid in allowed:
+                                continue
 
-                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp, class_jid=new_class.jid)
                         if new_item_id is not None:
                             new_items[slot_idx] = new_item_id
                         else:
@@ -1827,7 +1898,7 @@ def randomize_enemies(rom: ROM, config: dict,
                         for it in new_items if it != 0
                     )
                     if not has_weapon:
-                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp, class_jid=new_class.jid)
                         if new_item_id is not None:
                             for slot_idx in range(4):
                                 if new_items[slot_idx] == 0:
@@ -2383,10 +2454,10 @@ def _patch_ud_combat_weapons(rom: ROM, ud_offset: int, pids: Set[int],
 
         if not has_combat and replace_slots:
             combat_ranks = [cd.baseWexp[t] if t != 4 else 0 for t in range(8)]
-            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks, class_jid=cd.jidDefault)
             if new_id is None:
                 combat_ranks = [1 if t != 4 else 0 for t in range(8)]
-                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks, class_jid=cd.jidDefault)
             if new_id is not None:
                 data[arr_pos + 12 + replace_slots[0]] = new_id
                 fixed += 1
@@ -2546,7 +2617,7 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
         lines.append(f'  --- Range: {growth_total_min} - {growth_total_max}  Avg: {avg:.1f} ---')
     lines.append('')
 
-    lines.append('=== Weapon Effect Changes ===')
+    lines.append('=== Weapon Effect / Attribute Changes ===')
     eff_changed = 0
     for item_id in range(256):
         off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
@@ -2555,15 +2626,32 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
         stored_id = data[off + 6]
         if stored_id != item_id:
             continue
+        item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
+        wep_type = data[off + 7]
+        type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
+
+        # Weapon effect ID at offset 0x1F
         orig_eff = orig_data[off + 0x1F] if off < len(orig_data) else 0
         mod_eff = data[off + 0x1F]
-        if orig_eff != mod_eff:
-            wep_type = data[off + 7]
-            type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
-            from_name = EFFECT_NAMES.get(orig_eff, f'0x{orig_eff:02X}')
-            to_name = EFFECT_NAMES.get(mod_eff, f'0x{mod_eff:02X}')
-            item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
-            lines.append(f'  {item_name} ({type_name}): {from_name} -> {to_name}')
+        eff_change = orig_eff != mod_eff
+
+        # Brave/reaver attribute bits at offset 0x08
+        orig_attrs = struct.unpack_from('<I', orig_data, off + 0x08)[0] if off + 4 < len(orig_data) else 0
+        mod_attrs = struct.unpack_from('<I', data, off + 0x08)[0]
+        brave_added = (mod_attrs & 0x20) and not (orig_attrs & 0x20)
+        reaver_added = (mod_attrs & 0x100) and not (orig_attrs & 0x100)
+
+        if eff_change or brave_added or reaver_added:
+            parts = []
+            if eff_change:
+                from_name = EFFECT_NAMES.get(orig_eff, f'0x{orig_eff:02X}')
+                to_name = EFFECT_NAMES.get(mod_eff, f'0x{mod_eff:02X}')
+                parts.append(f'effect: {from_name} -> {to_name}')
+            if brave_added:
+                parts.append('+BRAVE')
+            if reaver_added:
+                parts.append('+REAVER')
+            lines.append(f'  {item_name} ({type_name}): {", ".join(parts)}')
             eff_changed += 1
     if eff_changed == 0:
         lines.append('  (none)')
