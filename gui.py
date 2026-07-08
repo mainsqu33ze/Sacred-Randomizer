@@ -97,6 +97,8 @@ class FE8RandomizerGUI(tk.Tk):
         self.fx_eclipse = tk.IntVar(value=1)
         self.fx_devil = tk.IntVar(value=5)
         self.fx_stone = tk.IntVar(value=1)
+        self.fx_brave = tk.IntVar(value=5)
+        self.fx_reaver = tk.IntVar(value=3)
 
         # Recruitment Settings
         self.recruit_enabled = tk.BooleanVar(value=False)
@@ -404,6 +406,11 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(fx, text="% chance per weapon:").grid(row=1, column=0, sticky=tk.W, padx=15, pady=2)
         ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_enabled_pct, width=5).grid(row=1, column=1, padx=6, sticky=tk.W)
 
+        ttk.Label(fx, text="Brave attr bit %:").grid(row=2, column=2, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_brave, width=5).grid(row=2, column=3, padx=6, sticky=tk.W)
+        ttk.Label(fx, text="Reaver attr bit %:").grid(row=3, column=2, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_reaver, width=5).grid(row=3, column=3, padx=6, sticky=tk.W)
+
         effects = [
             ("Poison weight:", self.fx_poison),
             ("Nosferatu weight:", self.fx_nosferatu),
@@ -564,6 +571,8 @@ class FE8RandomizerGUI(tk.Tk):
                 "eclipse": self.fx_eclipse.get(),
                 "devil": self.fx_devil.get(),
                 "stone": self.fx_stone.get(),
+                "brave": self.fx_brave.get(),
+                "reaver": self.fx_reaver.get(),
             },
             "recruitment_randomization": {
                 "enabled": self.recruit_enabled.get(),
@@ -713,6 +722,8 @@ class FE8RandomizerGUI(tk.Tk):
             self.fx_eclipse.set(fx.get("eclipse", 1))
             self.fx_devil.set(fx.get("devil", 5))
             self.fx_stone.set(fx.get("stone", 1))
+            self.fx_brave.set(fx.get("brave", 5))
+            self.fx_reaver.set(fx.get("reaver", 3))
 
             rr = d.get("recruitment_randomization", {})
             self.recruit_enabled.set(_bool(rr.get("enabled")))
