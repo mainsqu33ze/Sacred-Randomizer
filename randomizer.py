@@ -161,6 +161,23 @@ TRAINEE_JIDS = frozenset({JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT})
 
 MANAKETE_JIDS = frozenset({JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH})
 
+FEMALE_PLAYABLE_PIDS = frozenset({
+    PID.EIRIKA, PID.VANESSA, PID.NEIMI, PID.LUTE, PID.NATASHA,
+    PID.AMELIA, PID.TETHYS, PID.MARISA, PID.LARACHEL, PID.MYRRH,
+    PID.SYRENE, PID.TANA,
+})
+
+MALE_EXCLUSIVE_JIDS = frozenset({
+    JID.FIGHTER, JID.WARRIOR, JID.BERSERKER, JID.PIRATE,
+    JID.MONK, JID.PRIEST, JID.THIEF, JID.JOURNEYMAN, JID.PUPIL,
+})
+
+FEMALE_EXCLUSIVE_JIDS = frozenset({
+    JID.CLERIC, JID.TROUBADOUR, JID.VALKYRIE, JID.DANCER,
+    JID.RECRUIT, JID.PEGASUS_KNIGHT, JID.FALCON_KNIGHT,
+    JID.MANAKETE_MYRRH,
+})
+
 TRAINEE_PROMO_TABLE_ADDR = 0x08207044
 TRAINEE_PROMO_ENTRY_SIZE = 4
 TRAINEE_PROMO_COUNT = 3
@@ -265,6 +282,32 @@ def _parse_omit_classes(config: dict, key: str = 'class_randomization') -> Set[i
         if hasattr(JID, name):
             omit.add(getattr(JID, name))
     return omit
+
+
+def _is_character_female(rom: ROM, pid: int) -> bool:
+    cd = CharacterData(rom, pid)
+    jid = cd.jidDefault
+    if jid in FEMALE_EXCLUSIVE_JIDS:
+        return True
+    if jid in MALE_EXCLUSIVE_JIDS:
+        return False
+    for male_jid, female_jid in MALE_FEMALE_PAIRS:
+        if jid == female_jid:
+            return True
+        if jid == male_jid:
+            return False
+    if pid not in PLAYABLE_PLAYABLE_PIDS:
+        return pid in FEMALE_PLAYABLE_PIDS
+    return False
+
+
+def _swap_gendered_class(jid: int, is_female: bool) -> int:
+    for male_jid, female_jid in MALE_FEMALE_PAIRS:
+        if is_female and jid == male_jid:
+            return female_jid
+        if not is_female and jid == female_jid:
+            return male_jid
+    return jid
 
 
 def _split_class_pool(rom: ROM) -> Tuple[Set[int], Set[int]]:
@@ -693,6 +736,7 @@ def randomize_class(rom: ROM, config: dict) -> Set[int]:
     rules = config.get('class_randomization', {})
     mode = rules.get('mode', 'shuffle')
     manakete_count = rules.get('manakete_count', 1)
+    gender_lock = rules.get('gender_lock', False)
     if 'shuffle' in rules and not rules.get('shuffle', True):
         mode = 'none'
         manakete_count = 0
@@ -721,46 +765,135 @@ def randomize_class(rom: ROM, config: dict) -> Set[int]:
         unpromoted_jids.discard(JID.SOLDIER)
     promoted_jids.discard(JID.SOLDIER)
 
-    if mode == 'shuffle':
-        if trainee_chars and available_trainee:
-            trainee_pool = list(available_trainee)
-            random.shuffle(trainee_pool)
-            for pid, new_jid in zip(trainee_chars, trainee_pool):
-                _assign(pid, new_jid)
+    if gender_lock:
+        def _gender_pool(jids, is_female):
+            pool = set()
+            for j in jids:
+                sj = _swap_gendered_class(j, is_female)
+                if is_female and sj in MALE_EXCLUSIVE_JIDS:
+                    continue
+                if not is_female and sj in FEMALE_EXCLUSIVE_JIDS:
+                    continue
+                pool.add(sj)
+            return sorted(pool)
 
-        if promoted_chars:
-            pool_p = list(promoted_jids)
-            random.shuffle(pool_p)
-            for pid, new_jid in zip(promoted_chars, pool_p):
-                _assign(pid, new_jid)
+        def _split_by_gender(pids):
+            male = [p for p in pids if not _is_character_female(rom, p)]
+            female = [p for p in pids if _is_character_female(rom, p)]
+            return male, female
 
-        if non_trainee_unpromoted:
-            pool_u = list(unpromoted_jids)
-            random.shuffle(pool_u)
-            for pid, new_jid in zip(non_trainee_unpromoted, pool_u):
-                _assign(pid, new_jid)
+        trainee_m, trainee_f = _split_by_gender(trainee_chars)
+        promoted_m, promoted_f = _split_by_gender(promoted_chars)
+        unpromoted_m, unpromoted_f = _split_by_gender(non_trainee_unpromoted)
 
-    elif mode == 'random':
-        promoted_list = sorted(promoted_jids)
-        unpromoted_list = sorted(unpromoted_jids)
-        trainee_list = sorted(available_trainee)
+        trainee_pool_m = _gender_pool(available_trainee, False)
+        trainee_pool_f = _gender_pool(available_trainee, True)
+        promoted_pool_m = _gender_pool(promoted_jids, False)
+        promoted_pool_f = _gender_pool(promoted_jids, True)
+        unpromoted_pool_m = _gender_pool(unpromoted_jids, False)
+        unpromoted_pool_f = _gender_pool(unpromoted_jids, True)
 
-        for pid in trainee_chars:
-            if trainee_list:
-                _assign(pid, random.choice(trainee_list))
+        if mode == 'shuffle':
+            if trainee_m and trainee_pool_m:
+                pool = list(trainee_pool_m)
+                random.shuffle(pool)
+                for pid, new_jid in zip(trainee_m, pool):
+                    _assign(pid, new_jid)
+            if trainee_f and trainee_pool_f:
+                pool = list(trainee_pool_f)
+                random.shuffle(pool)
+                for pid, new_jid in zip(trainee_f, pool):
+                    _assign(pid, new_jid)
 
-        for pid in promoted_chars:
-            if promoted_list:
-                _assign(pid, random.choice(promoted_list))
+            if promoted_m and promoted_pool_m:
+                pool = list(promoted_pool_m)
+                random.shuffle(pool)
+                for pid, new_jid in zip(promoted_m, pool):
+                    _assign(pid, new_jid)
+            if promoted_f and promoted_pool_f:
+                pool = list(promoted_pool_f)
+                random.shuffle(pool)
+                for pid, new_jid in zip(promoted_f, pool):
+                    _assign(pid, new_jid)
 
-        for pid in non_trainee_unpromoted:
-            if unpromoted_list:
-                _assign(pid, random.choice(unpromoted_list))
+            if unpromoted_m and unpromoted_pool_m:
+                pool = list(unpromoted_pool_m)
+                random.shuffle(pool)
+                for pid, new_jid in zip(unpromoted_m, pool):
+                    _assign(pid, new_jid)
+            if unpromoted_f and unpromoted_pool_f:
+                pool = list(unpromoted_pool_f)
+                random.shuffle(pool)
+                for pid, new_jid in zip(unpromoted_f, pool):
+                    _assign(pid, new_jid)
+
+        elif mode == 'random':
+            for pid in trainee_m:
+                if trainee_pool_m:
+                    _assign(pid, random.choice(trainee_pool_m))
+            for pid in trainee_f:
+                if trainee_pool_f:
+                    _assign(pid, random.choice(trainee_pool_f))
+
+            for pid in promoted_m:
+                if promoted_pool_m:
+                    _assign(pid, random.choice(promoted_pool_m))
+            for pid in promoted_f:
+                if promoted_pool_f:
+                    _assign(pid, random.choice(promoted_pool_f))
+
+            for pid in unpromoted_m:
+                if unpromoted_pool_m:
+                    _assign(pid, random.choice(unpromoted_pool_m))
+            for pid in unpromoted_f:
+                if unpromoted_pool_f:
+                    _assign(pid, random.choice(unpromoted_pool_f))
+
+    else:
+        if mode == 'shuffle':
+            if trainee_chars and available_trainee:
+                trainee_pool = list(available_trainee)
+                random.shuffle(trainee_pool)
+                for pid, new_jid in zip(trainee_chars, trainee_pool):
+                    _assign(pid, new_jid)
+
+            if promoted_chars:
+                pool_p = list(promoted_jids)
+                random.shuffle(pool_p)
+                for pid, new_jid in zip(promoted_chars, pool_p):
+                    _assign(pid, new_jid)
+
+            if non_trainee_unpromoted:
+                pool_u = list(unpromoted_jids)
+                random.shuffle(pool_u)
+                for pid, new_jid in zip(non_trainee_unpromoted, pool_u):
+                    _assign(pid, new_jid)
+
+        elif mode == 'random':
+            promoted_list = sorted(promoted_jids)
+            unpromoted_list = sorted(unpromoted_jids)
+            trainee_list = sorted(available_trainee)
+
+            for pid in trainee_chars:
+                if trainee_list:
+                    _assign(pid, random.choice(trainee_list))
+
+            for pid in promoted_chars:
+                if promoted_list:
+                    _assign(pid, random.choice(promoted_list))
+
+            for pid in non_trainee_unpromoted:
+                if unpromoted_list:
+                    _assign(pid, random.choice(unpromoted_list))
 
     if manakete_count > 0 and PLAYABLE_PLAYABLE_PIDS:
         playable_all = sorted(PLAYABLE_PLAYABLE_PIDS)
-        count = min(manakete_count, len(playable_all))
-        for pid in random.sample(playable_all, count):
+        if gender_lock:
+            candidates = [p for p in playable_all if _is_character_female(rom, p)]
+        else:
+            candidates = playable_all
+        count = min(manakete_count, len(candidates))
+        for pid in random.sample(candidates, count):
             _assign(pid, JID.MANAKETE_MYRRH)
 
     return modified_pids
@@ -1728,6 +1861,7 @@ def randomize_enemies(rom: ROM, config: dict,
     total = 0
 
     # Phase A: CharacterData.jidDefault
+    enemy_gender_lock = rules.get('gender_lock', False)
     if rand_classes:
         if tqdm:
             pbar = tqdm(total=len(pid_range), desc="Enemy classes (A)", unit="pid", leave=False)
@@ -1746,6 +1880,19 @@ def randomize_enemies(rom: ROM, config: dict,
             is_promoted = bool(orig_class.attributes & CA_PROMOTED)
             key = _move_group_key(orig_class.moveTable[0])
             candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
+
+            if enemy_gender_lock and pid in BOSS_PIDS:
+                is_female = _is_character_female(rom, pid)
+                filtered = []
+                for c in candidates:
+                    sj = _swap_gendered_class(c, is_female)
+                    if is_female and sj in MALE_EXCLUSIVE_JIDS:
+                        continue
+                    if not is_female and sj in FEMALE_EXCLUSIVE_JIDS:
+                        continue
+                    filtered.append(sj)
+                candidates = filtered if filtered else [_swap_gendered_class(orig_jid, is_female)]
+
             new_jid = random.choice(candidates)
             if new_jid != orig_jid:
                 rom.data[cd.offset + 5] = new_jid
