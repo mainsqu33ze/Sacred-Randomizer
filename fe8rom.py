@@ -5,6 +5,10 @@ from typing import List, Optional, Tuple
 # ROM constants
 ROM_BASE = 0x08000000
 
+# Portrait table base address — character portrait metadata entries
+PORTRAIT_TABLE_ADDR = 0x088ACBC4
+PORTRAIT_ENTRY_SIZE = 0x1C
+
 
 class PID(IntEnum):
     NONE = 0
@@ -41,6 +45,46 @@ class PID(IntEnum):
     JOSHUA = 32
     SYRENE = 33
     TANA = 34
+
+
+# PID → portrait table entry slot index mapping.
+# Slot n = entry at PORTRAIT_TABLE_ADDR + n * PORTRAIT_ENTRY_SIZE
+# Values derived from FEBuilder portrait table dump (entry addr offsets).
+PID_TO_PORTRAIT_SLOT = {
+    PID.EIRIKA:   0x02,
+    PID.SETH:     0x04,
+    PID.GILLIAM:  0x05,
+    PID.FRANZ:    0x06,
+    PID.MOULDER:  0x07,
+    PID.VANESSA:  0x08,
+    PID.ROSS:     0x09,
+    PID.NEIMI:    0x0A,
+    PID.COLM:     0x0C,
+    PID.GARCIA:   0x0E,
+    PID.INNES:    0x0F,
+    PID.LUTE:     0x10,
+    PID.ARTUR:  0x11,
+    PID.CORMAG:   0x13,
+    PID.EPHRAIM:  0x14,
+    PID.FORDE:    0x16,
+    PID.KYLE:     0x18,
+    PID.AMELIA:   0x19,
+    PID.NATASHA:    0x1A,
+    PID.GERIK:    0x1B,
+    PID.TETHYS:   0x1C,
+    PID.MARISA:   0x1E,
+    PID.SALEH:    0x20,
+    PID.EWAN:     0x21,
+    PID.LARACHEL: 0x22,
+    PID.DOZLA:    0x23,
+    PID.RENNAC:   0x24,
+    PID.DUESSEL:  0x25,
+    PID.MYRRH:    0x26,
+    PID.KNOLL:    0x29,
+    PID.JOSHUA:   0x2A,
+    PID.SYRENE:   0x2B,
+    PID.TANA:     0x2C,
+}
 
 
 class JID(IntEnum):
@@ -177,7 +221,7 @@ _CHAR_ATTRS = struct.Struct('<I')        # attributes
 _CHAR_TAIL = struct.Struct('<II')        # supportInfoPtr, _pU30
 _CLASS_BASE_VALS = struct.Struct('8b')  # class base stats
 _CLASS_MAX_VALS = struct.Struct('7b')   # class max stats
-_CLASS_GROWTHS = struct.Struct('7b')    # class growths
+_CLASS_GROWTHS = struct.Struct('7B')    # class growths (unsigned — game stores 0-255)
 _CLASS_ATTRS = struct.Struct('<I')      # class attributes
 _CLASS_MOVE_PTRS = struct.Struct('<IIIII')  # move table ptrs
 _CLASS_TAIL = struct.Struct('<III')     # terrain lookups + _pU50
@@ -488,6 +532,217 @@ BALLISTA_ITEM_IDS = frozenset({0x35, 0x36, 0x37})
 PALETTE_CLASS_TABLE_PTR_OFF = 0x575B4  # ROM offset of pointer to palette class table
 PALETTE_INDEX_TABLE_PTR_OFF = 0x57394  # ROM offset of pointer to palette index table
 PALETTE_ENTRY_SIZE = 7
+PALETTE_TABLE_ADDR = 0x08EF8004  # 16-byte entries: [GBA ptr, 3-char name, 9 pad]
+PALETTE_INTERLEAVE_COUNT = 5  # PLAYER, ENEMY, NPC, OTHER, LINK
+PALETTE_COLORS = 16
+PALETTE_SUB_SIZE = PALETTE_COLORS * 2  # 32 bytes per sub-palette
+PALETTE_SET_SIZE = PALETTE_INTERLEAVE_COUNT * PALETTE_SUB_SIZE  # 160 bytes total
+
+
+def lz77_decompress(data: bytearray, offset: int) -> Optional[bytearray]:
+    if offset + 4 > len(data) or data[offset] != 0x10:
+        return None
+    decomp_size = data[offset+1] | (data[offset+2] << 8) | (data[offset+3] << 16)
+    result = bytearray()
+    pos = offset + 4
+    while len(result) < decomp_size:
+        if pos >= len(data):
+            break
+        flags = data[pos]
+        pos += 1
+        for bit in range(8):
+            if len(result) >= decomp_size:
+                break
+            if pos >= len(data):
+                break
+            if flags & (0x80 >> bit):
+                result.append(data[pos])
+                pos += 1
+            else:
+                if pos + 2 > len(data):
+                    break
+                block = data[pos] | (data[pos+1] << 8)
+                pos += 2
+                disp = block & 0x0FFF
+                n = ((block >> 12) & 0xF) + 3
+                for _ in range(n):
+                    if len(result) >= decomp_size:
+                        break
+                    copy_pos = len(result) - disp - 1
+                    if copy_pos < 0:
+                        break
+                    result.append(result[copy_pos])
+    return result[:decomp_size]
+
+
+def lz77_compress(data: bytearray) -> bytearray:
+    n = len(data)
+    header = bytearray([0x10, n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF])
+    result = bytearray()
+    pos = 0
+    while pos < n:
+        flags_byte_pos = len(result)
+        result.append(0)
+        for bit in range(8):
+            if pos >= n:
+                result[flags_byte_pos] |= (0x80 >> bit)
+                continue
+            best_disp = 0
+            best_len = 0
+            max_len = min(n - pos, 18)
+            search_start = max(0, pos - 4096)
+            for search_pos in range(search_start, pos):
+                match_len = 0
+                while match_len < max_len and data[search_pos + match_len] == data[pos + match_len]:
+                    match_len += 1
+                if match_len > best_len:
+                    best_len = match_len
+                    best_disp = pos - search_pos - 1
+                    if best_len == max_len:
+                        break
+            if best_len >= 3:
+                block = ((best_len - 3) << 12) | best_disp
+                result.extend([block & 0xFF, (block >> 8) & 0xFF])
+                pos += best_len
+            else:
+                result[flags_byte_pos] |= (0x80 >> bit)
+                result.append(data[pos])
+                pos += 1
+    return header + result
+
+
+def pal15_to_rgb(c: int) -> tuple:
+    return ((c & 0x1F) * 8, ((c >> 5) & 0x1F) * 8, ((c >> 10) & 0x1F) * 8)
+
+
+def rgb_to_pal15(r: int, g: int, b: int) -> int:
+    return (min(r // 8, 31)) | (min(g // 8, 31) << 5) | (min(b // 8, 31) << 10)
+
+
+def color_distance(c1: int, c2: int) -> float:
+    r1, g1, b1 = pal15_to_rgb(c1)
+    r2, g2, b2 = pal15_to_rgb(c2)
+    dr, dg, db = r1 - r2, g1 - g2, b1 - b2
+    return (2 * dr * dr + 4 * dg * dg + 3 * db * db) ** 0.5
+
+
+def read_palette_set(rom: ROM, palette_id: int) -> Optional[bytearray]:
+    """Read a 5-palette set (160 bytes) by palette ID. Returns None if invalid."""
+    table_off = rom_offset(PALETTE_TABLE_ADDR) + palette_id * 16
+    if table_off + 16 > len(rom.data):
+        return None
+    ptr = _U32.unpack_from(rom.data, table_off)[0]
+    if not (0x08000000 <= ptr <= 0x09000000):
+        return None
+    data_off = ptr - ROM_BASE
+    decomp = lz77_decompress(rom.data, data_off)
+    if decomp is None or len(decomp) != PALETTE_SET_SIZE:
+        return None
+    return decomp
+
+
+def deinterleave_palette(data: bytearray, slot: int) -> bytearray:
+    """Extract one sub-palette (32 bytes, 16 colors) from the interleaved set.
+    slot: 0=PLAYER, 1=ENEMY, 2=NPC, 3=OTHER, 4=LINK."""
+    result = bytearray(PALETTE_SUB_SIZE)
+    for i in range(PALETTE_COLORS):
+        src_off = i * PALETTE_INTERLEAVE_COUNT * 2 + slot * 2
+        result[i * 2] = data[src_off]
+        result[i * 2 + 1] = data[src_off + 1]
+    return result
+
+
+def interleave_palettes(subs: list) -> bytearray:
+    """Interleave 5 sub-palettes back into one 160-byte set."""
+    result = bytearray(PALETTE_SET_SIZE)
+    for slot, sub in enumerate(subs):
+        for i in range(PALETTE_COLORS):
+            dst_off = i * PALETTE_INTERLEAVE_COUNT * 2 + slot * 2
+            result[dst_off] = sub[i * 2]
+            result[dst_off + 1] = sub[i * 2 + 1]
+    return result
+
+
+_MAX_ROM_SIZE = 32 * 1024 * 1024  # 32 MB — maximum GBA ROM size
+
+
+def _cleanup_stale_palette_entries(rom: ROM) -> None:
+    """Zero out palette entries with non-4-byte-aligned data pointers."""
+    table_off = rom_offset(PALETTE_TABLE_ADDR)
+    for pid in range(1, 256):
+        off = table_off + pid * 16
+        if off + 16 > len(rom.data):
+            break
+        ptr = _U32.unpack_from(rom.data, off)[0]
+        if ptr != 0 and ptr % 4 != 0:
+            for i in range(16):
+                rom.data[off + i] = 0
+
+
+def _find_next_palette_id(rom: ROM) -> int:
+    """Find the next unused palette ID (starting from 1)."""
+    _cleanup_stale_palette_entries(rom)
+    table_off = rom_offset(PALETTE_TABLE_ADDR)
+    for pid in range(1, 256):
+        off = table_off + pid * 16
+        if off + 4 > len(rom.data):
+            break
+        ptr = _U32.unpack_from(rom.data, off)[0]
+        if ptr == 0:
+            return pid
+    return -1
+
+
+def write_palette_set(rom: ROM, palette_data: bytearray, name: str = '') -> int:
+    """Write a new 5-palette set by appending to the end of the ROM.
+    Expands rom.data as needed. Returns palette ID or -1."""
+    if len(palette_data) != PALETTE_SET_SIZE:
+        return -1
+
+    compressed = lz77_compress(palette_data)
+    needed = len(compressed)
+    aligned = (needed + 3) & ~3  # 4-byte alignment
+
+    pid = _find_next_palette_id(rom)
+    if pid < 0:
+        return -1
+
+    # Append compressed data at the end of the ROM
+    write_start = len(rom.data)
+    if write_start + aligned > _MAX_ROM_SIZE:
+        return -1  # out of ROM space (max 32 MB)
+    rom.data.extend(compressed)
+    if aligned > needed:
+        rom.data.extend(b'\x00' * (aligned - needed))
+    data_gba = ROM_BASE + write_start
+
+    # Write palette table entry
+    table_off = rom_offset(PALETTE_TABLE_ADDR) + pid * 16
+    _U32.pack_into(rom.data, table_off, data_gba)
+    name_bytes = name.encode('ascii', errors='replace')[:3].ljust(3, b'\x00')
+    rom.data[table_off + 4:table_off + 7] = name_bytes
+    for i in range(7, 16):
+        rom.data[table_off + i] = 0
+
+    return pid
+
+
+def swap_portrait_entries(rom: ROM, pid_a: int, pid_b: int) -> bool:
+    """Swap portrait table data between two PIDs. Returns True on success."""
+    slot_a = PID_TO_PORTRAIT_SLOT.get(pid_a)
+    slot_b = PID_TO_PORTRAIT_SLOT.get(pid_b)
+    if slot_a is None or slot_b is None:
+        return False
+    base_off = rom_offset(PORTRAIT_TABLE_ADDR)
+    off_a = base_off + slot_a * PORTRAIT_ENTRY_SIZE
+    off_b = base_off + slot_b * PORTRAIT_ENTRY_SIZE
+    if off_a + PORTRAIT_ENTRY_SIZE > len(rom.data) or off_b + PORTRAIT_ENTRY_SIZE > len(rom.data):
+        return False
+    tmp = bytearray(rom.data[off_a:off_a + PORTRAIT_ENTRY_SIZE])
+    rom.data[off_a:off_a + PORTRAIT_ENTRY_SIZE] = rom.data[off_b:off_b + PORTRAIT_ENTRY_SIZE]
+    rom.data[off_b:off_b + PORTRAIT_ENTRY_SIZE] = tmp
+    return True
+
 
 _EVENT_CMDS_WITH_UD = (0x40, 0x41, 0x42, 0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4)
 
@@ -509,7 +764,7 @@ class ItemData:
         raw = rom.read(offset, ITEM_DATA_SIZE)
         self.item_id = item_id
         self.offset = offset
-        self.name_text_id, self.desc_text_id = _U16.unpack_from(raw, 0)
+        self.name_text_id, self.desc_text_id = struct.unpack_from('<HH', raw, 0)
         self.use_desc_text_id, = _U16.unpack_from(raw, 4)
         self.number = raw[6]
         self.weapon_type = raw[7]

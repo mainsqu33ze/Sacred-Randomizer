@@ -14,7 +14,11 @@ from fe8rom import (
     build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE,
     CHAPTER_DATA_TABLE, CHAPTER_INFO_SIZE, CHAPTER_ASSET_TABLE,
     ITEM_NAMES, PALETTE_CLASS_TABLE_PTR_OFF, PALETTE_INDEX_TABLE_PTR_OFF,
-    PALETTE_ENTRY_SIZE, _U16, _U32, _EVENT_CMDS_WITH_UD,
+    PALETTE_ENTRY_SIZE, PALETTE_TABLE_ADDR, PALETTE_SET_SIZE,
+    PALETTE_INTERLEAVE_COUNT, PALETTE_SUB_SIZE, PALETTE_COLORS,
+    read_palette_set, deinterleave_palette, interleave_palettes,
+    write_palette_set, color_distance, pal15_to_rgb, rgb_to_pal15,
+    swap_portrait_entries, _U16, _U32, _EVENT_CMDS_WITH_UD,
 )
 
 try:
@@ -191,6 +195,12 @@ EFFECT_NAMES = {0: '(none)', 1: 'Poison', 2: 'Nosferatu', 3: 'Eclipse', 4: 'Devi
 
 S_RANK_WEXP = 251
 
+# Items with class lock (bit 12 in attributes) mapped to their allowed class JIDs.
+# Shamshir (0x0C) is the only vanilla item with this flag — restricted to Myrmidon/Swordmaster.
+CLASS_LOCKED_ITEM_RESTRICTIONS = {
+    0x0C: frozenset({JID.MYRMIDON, JID.MYRMIDON_F, JID.SWORDMASTER, JID.SWORDMASTER_F}),
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -292,7 +302,22 @@ def _get_con_rules(rules: dict, class_enabled) -> Tuple[bool, int, int, int]:
     return (is_class_random, 1, 1, rules.get('stddev', 3))
 
 
-def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int]) -> Optional[int]:
+def _is_class_locked_item(rom: ROM, item_id: int) -> bool:
+    off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
+    if off + 12 > len(rom.data):
+        return False
+    attrs = _U32.unpack_from(rom.data, off + 0x08)[0]
+    return bool(attrs & 0x1000)
+
+def _filter_class_locked(rom: ROM, item_ids: List[int], class_jid: int) -> List[int]:
+    allowed_jids = CLASS_LOCKED_ITEM_RESTRICTIONS
+    return [
+        iid for iid in item_ids
+        if not _is_class_locked_item(rom, iid) or (iid in allowed_jids and class_jid in allowed_jids[iid])
+    ]
+
+def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int],
+                          class_jid: int = None) -> Optional[int]:
     candidates = []
     for t in range(8):
         if char_ranks[t] == 0 or not weapon_pools[t]:
@@ -301,6 +326,10 @@ def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int]) -
         for item_id, rank in weapon_pools[t]:
             if rank <= max_rank:
                 candidates.append(item_id)
+    if class_jid is not None:
+        filtered = _filter_class_locked(rom, candidates, class_jid)
+        if filtered:
+            return random.choice(filtered)
     return random.choice(candidates) if candidates else None
 
 
@@ -600,6 +629,36 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     for src_pid, dst_pid in zip(pids, shuffled):
         dst_off = pal_idx_off + (dst_pid - 1) * PALETTE_ENTRY_SIZE
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[src_pid]
+
+    # Remap portrait table entries: dst_pid's portrait slot gets src_pid's
+    # original data, so the face shown matches the character who now occupies
+    # that PID slot.  Copy from saved originals instead of sequential swaps
+    # to avoid corrupting the permutation mapping.
+    from fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
+    portrait_snap = {}
+    for pid in pids:
+        slot = PID_TO_PORTRAIT_SLOT.get(pid)
+        if slot is not None:
+            off = rom_offset(PORTRAIT_TABLE_ADDR) + slot * PORTRAIT_ENTRY_SIZE
+            portrait_snap[pid] = bytearray(rom.data[off:off + PORTRAIT_ENTRY_SIZE])
+    remapped = 0
+    for src_pid, dst_pid in zip(pids, shuffled):
+        if src_pid != dst_pid and src_pid in portrait_snap and dst_pid in portrait_snap:
+            dst_slot = PID_TO_PORTRAIT_SLOT[dst_pid]
+            dst_off = rom_offset(PORTRAIT_TABLE_ADDR) + dst_slot * PORTRAIT_ENTRY_SIZE
+            rom.data[dst_off:dst_off + PORTRAIT_ENTRY_SIZE] = portrait_snap[src_pid]
+            remapped += 1
+    if remapped:
+        _vprint(f"Remapped {remapped} portrait table entr(y/ies) for recruitment shuffle")
+
+    # Restore each PID's face ID (fid at offset 6, u16) to the original PID's
+    # portrait slot index.  After the portrait remap, dst_pid's slot now holds
+    # src_pid's portrait data, so dst_pid's fid must point to dst_pid's own
+    # slot (its original value) for the UI portrait lookup to land correctly.
+    for pid in pids:
+        off = char_table_off + (pid - 1) * PINFO_SIZE
+        orig_fid = struct.unpack_from('<H', char_data[pid], 6)[0]
+        struct.pack_into('<H', rom.data, off + 6, orig_fid)
 
     remapped = _remap_trainee_table(rom)
     if remapped:
@@ -1090,10 +1149,27 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
         effect_ids.append(eid)
         weights.append(w)
 
-    if not effect_ids:
+    # Brave (attr bit 5 = 0x20) and reaver (attr bit 8 = 0x100)
+    brave_pct = 0
+    reaver_pct = 0
+    bv = rules.get('brave', 0)
+    if isinstance(bv, bool):
+        brave_pct = 100 if bv else 0
+    elif isinstance(bv, (int, float)):
+        brave_pct = float(bv)
+    rv = rules.get('reaver', 0)
+    if isinstance(rv, bool):
+        reaver_pct = 100 if rv else 0
+    elif isinstance(rv, (int, float)):
+        reaver_pct = float(rv)
+
+    has_work = bool(effect_ids) or brave_pct or reaver_pct
+    if not has_work:
         return
 
-    patched = 0
+    patched_eff = 0
+    patched_brave = 0
+    patched_reaver = 0
     item_table_off = rom_offset(ITEM_TABLE_ADDR)
     data_len = len(rom.data)
 
@@ -1113,13 +1189,34 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
             continue
         if raw[0x14] == 0:
             continue
-        if random.randint(1, 100) <= chance:
+
+        # Weapon effect ID (mutually exclusive, written to offset 0x1F)
+        if effect_ids and random.randint(1, 100) <= chance:
             eff = random.choices(effect_ids, weights=weights, k=1)[0]
             rom.write_u8(off + 0x1F, eff)
-            patched += 1
+            patched_eff += 1
 
-    if patched:
-        _vprint(f"Applied weapon effects to {patched} item(s)")
+        # Brave attribute bit 5 (0x20) at offset 0x08
+        if brave_pct and random.randint(1, 100) <= brave_pct:
+            attrs = rom.read_u32(off + 0x08)
+            rom.write_u32(off + 0x08, attrs | 0x20)
+            patched_brave += 1
+
+        # Reaver attribute bit 8 (0x100) at offset 0x08
+        if reaver_pct and random.randint(1, 100) <= reaver_pct:
+            attrs = rom.read_u32(off + 0x08)
+            rom.write_u32(off + 0x08, attrs | 0x100)
+            patched_reaver += 1
+
+    parts = []
+    if patched_eff:
+        parts.append(f"effects to {patched_eff}")
+    if patched_brave:
+        parts.append(f"brave to {patched_brave}")
+    if patched_reaver:
+        parts.append(f"reaver to {patched_reaver}")
+    if parts:
+        _vprint("Applied weapon " + ", ".join(parts) + " item(s)")
 
 
 # ---------------------------------------------------------------------------
@@ -1160,8 +1257,12 @@ def randomize_unit_items(rom: ROM, config: dict, modified_pids: Set[int],
                     if not idd.is_weapon():
                         continue
                     if cd.baseWexp[idd.weapon_type] > 0 and idd.weapon_rank <= cd.baseWexp[idd.weapon_type]:
-                        continue
-                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp)
+                        if not (idd.attributes & 0x1000):
+                            continue
+                        allowed = CLASS_LOCKED_ITEM_RESTRICTIONS.get(item_id, set())
+                        if cd.jidDefault in allowed:
+                            continue
+                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp, class_jid=cd.jidDefault)
                     if new_item_id is not None:
                         new_items[slot_idx] = new_item_id
 
@@ -1170,7 +1271,7 @@ def randomize_unit_items(rom: ROM, config: dict, modified_pids: Set[int],
                     for it in new_items if it != 0
                 )
                 if not has_weapon:
-                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp)
+                    new_item_id = _pick_weapon_for_type(rom, weapon_pools, cd.baseWexp, class_jid=cd.jidDefault)
                     if new_item_id is not None:
                         for slot_idx in range(4):
                             if new_items[slot_idx] == 0:
@@ -1780,9 +1881,13 @@ def randomize_enemies(rom: ROM, config: dict,
                         if not item.is_weapon():
                             continue
                         if new_class.baseWexp[item.weapon_type] > 0:
-                            continue
+                            if not (item.attributes & 0x1000):
+                                continue
+                            allowed = CLASS_LOCKED_ITEM_RESTRICTIONS.get(item_id, set())
+                            if new_class.jid in allowed:
+                                continue
 
-                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp, class_jid=new_class.jid)
                         if new_item_id is not None:
                             new_items[slot_idx] = new_item_id
                         else:
@@ -1793,7 +1898,7 @@ def randomize_enemies(rom: ROM, config: dict,
                         for it in new_items if it != 0
                     )
                     if not has_weapon:
-                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp)
+                        new_item_id = _pick_weapon_for_type(rom, weapon_pools, new_class.baseWexp, class_jid=new_class.jid)
                         if new_item_id is not None:
                             for slot_idx in range(4):
                                 if new_items[slot_idx] == 0:
@@ -1810,6 +1915,112 @@ def randomize_enemies(rom: ROM, config: dict,
         if tqdm: pbar.close()
 
     return total
+
+
+# ---------------------------------------------------------------------------
+# Portrait palette generation
+# ---------------------------------------------------------------------------
+
+def _find_class_template_palette_id(rom: ROM, jid: int) -> int:
+    """Find the default palette ID for a given class JID by scanning
+    PaletteClassTable for any PID that maps that JID in slot 1,
+    then returning the PaletteIndexTable entry for that PID's slot 1."""
+    pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
+    pal_cls_off = pal_cls_gba - ROM_BASE
+    pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
+    pal_idx_off = pal_idx_gba - ROM_BASE
+
+    for pid in range(1, 256):
+        cls_off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if cls_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        if rom.data[cls_off + 1] == jid:
+            idx_off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+            pid_idx = rom.data[idx_off + 1]
+            if pid_idx != 0:
+                return pid_idx
+    # Fallback: try any non-zero slot
+    for pid in range(1, 256):
+        cls_off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        if cls_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        entry = list(rom.data[cls_off:cls_off + PALETTE_ENTRY_SIZE])
+        if jid in entry:
+            slot = entry.index(jid)
+            idx_off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+            pid_idx = rom.data[idx_off + slot]
+            if pid_idx != 0:
+                return pid_idx
+    return 0
+
+
+def _get_palette_color(pal_set: bytearray, slot: int, color_idx: int) -> int:
+    """Read a single color from a palette set at the given sub-slot and color index."""
+    off = color_idx * PALETTE_INTERLEAVE_COUNT * 2 + slot * 2
+    return pal_set[off] | (pal_set[off + 1] << 8)
+
+
+def _generate_portrait_palette(rom: ROM, pid: int, source_pal_id: int,
+                                new_jid: int) -> int:
+    """Generate a new palette for PID by adapting their original palette
+    colors to the target class template. Returns the new palette ID or 0."""
+    target_pal_id = _find_class_template_palette_id(rom, new_jid)
+    if target_pal_id == 0:
+        return 0
+
+    source_set = read_palette_set(rom, source_pal_id)
+    target_set = read_palette_set(rom, target_pal_id)
+    if source_set is None or target_set is None:
+        return 0
+
+    target_player = deinterleave_palette(target_set, 0)
+
+    # Build a map: for each target color, find the nearest source color
+    new_player = bytearray(PALETTE_SUB_SIZE)
+    for i in range(PALETTE_COLORS):
+        tc_off = i * 2
+        tc = target_player[tc_off] | (target_player[tc_off + 1] << 8)
+
+        if i == 0 or tc == 0x7FFF:
+            new_player[tc_off] = target_player[tc_off]
+            new_player[tc_off + 1] = target_player[tc_off + 1]
+            continue
+
+        # Find closest source PLAYER color
+        best_dist = float('inf')
+        best_sc = tc
+        for j in range(1, PALETTE_COLORS):
+            sc = _get_palette_color(source_set, 0, j)
+            if sc == 0x7FFF:
+                continue
+            d = color_distance(tc, sc)
+            if d < best_dist:
+                best_dist = d
+                best_sc = sc
+
+        new_player[tc_off] = best_sc & 0xFF
+        new_player[tc_off + 1] = (best_sc >> 8) & 0xFF
+
+    # Build the new 5-palette set: replace PLAYER, keep others from target
+    subs = []
+    for slot in range(PALETTE_INTERLEAVE_COUNT):
+        if slot == 0:
+            subs.append(new_player)
+        else:
+            subs.append(deinterleave_palette(target_set, slot))
+    new_set = interleave_palettes(subs)
+
+    pid_name = PID(pid).name if pid in PID._value2member_map_ else f'p{pid}'
+    new_pal_id = write_palette_set(rom, new_set, pid_name[:3])
+    return new_pal_id
+
+
+def _update_palette_index(rom: ROM, pid: int, new_pal_id: int, slot: int = 1) -> None:
+    """Update a single slot in the PaletteIndexTable for the given PID."""
+    pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
+    pal_idx_off = pal_idx_gba - ROM_BASE
+    off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE + slot
+    rom.data[off] = new_pal_id
 
 
 # ---------------------------------------------------------------------------
@@ -1870,9 +2081,15 @@ def _build_trainee_chain_lookup(rom: ROM) -> Dict[int, list]:
 
 
 def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
-                               original_jids: Dict[int, int]) -> int:
+                               original_jids: Dict[int, int],
+                               config: dict = None) -> int:
     if not pid_set:
         return 0
+
+    portrait_enabled = False
+    if config:
+        class_rules = config.get('class_randomization', {})
+        portrait_enabled = class_rules.get('portrait_palettes', False)
 
     pal_class_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_class_off = pal_class_gba - ROM_BASE
@@ -1896,6 +2113,21 @@ def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
         for b in cls_entry:
             if b != 0:
                 class_to_donors.setdefault(b, []).append(donor_pid)
+
+    # Build JID → template palette ID from ORIGINAL (unmodified) data
+    jid_to_template_pal = {}
+    for donor_pid in range(1, 256):
+        cls_off = pal_class_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE
+        if cls_off + PALETTE_ENTRY_SIZE > len(rom.data):
+            break
+        cls_entry = rom.data[cls_off:cls_off + PALETTE_ENTRY_SIZE]
+        for slot in range(7):
+            jid = cls_entry[slot]
+            if jid != 0:
+                idx_off = pal_idx_off + (donor_pid - 1) * PALETTE_ENTRY_SIZE + slot
+                pal_id = rom.data[idx_off]
+                if pal_id != 0 and jid not in jid_to_template_pal:
+                    jid_to_template_pal[jid] = pal_id
 
     count = 0
     for pid in sorted(pid_set):
@@ -2002,6 +2234,41 @@ def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
                 rom.data[entry_off + i] = new[i]
                 changes += 1
         count += changes
+
+    # (C.5) Portrait-based palette generation
+    if portrait_enabled:
+        for pid in sorted(pid_set):
+            new_jid = CharacterData(rom, pid).jidDefault
+            if new_jid == 0:
+                continue
+
+            idx_off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+            if idx_off + PALETTE_ENTRY_SIZE > len(rom.data):
+                continue
+            idx_entry = list(rom.data[idx_off:idx_off + PALETTE_ENTRY_SIZE])
+            if all(b == 0 for b in idx_entry):
+                continue
+
+            source_pal_id = idx_entry[1]
+            if source_pal_id == 0:
+                # Try other non-zero slots
+                for s in range(7):
+                    if idx_entry[s] != 0:
+                        source_pal_id = idx_entry[s]
+                        break
+            if source_pal_id == 0:
+                continue
+
+            # Don't generate if the source palette IS the target class template
+            target_pal_id = jid_to_template_pal.get(new_jid, 0)
+            if target_pal_id == 0 or source_pal_id == target_pal_id:
+                continue
+
+            new_pal_id = _generate_portrait_palette(rom, pid, source_pal_id, new_jid)
+            if new_pal_id > 0:
+                _update_palette_index(rom, pid, new_pal_id)
+                count += 1
+                _vprint(f"  Generated portrait palette for PID {pid} (0x{new_pal_id:02X})")
 
     # (D) Borrow PaletteIndexTable for PIDs with all-zero entries
     for pid in sorted(pid_set):
@@ -2187,10 +2454,10 @@ def _patch_ud_combat_weapons(rom: ROM, ud_offset: int, pids: Set[int],
 
         if not has_combat and replace_slots:
             combat_ranks = [cd.baseWexp[t] if t != 4 else 0 for t in range(8)]
-            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+            new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks, class_jid=cd.jidDefault)
             if new_id is None:
                 combat_ranks = [1 if t != 4 else 0 for t in range(8)]
-                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks)
+                new_id = _pick_weapon_for_type(rom, weapon_pools, combat_ranks, class_jid=cd.jidDefault)
             if new_id is not None:
                 data[arr_pos + 12 + replace_slots[0]] = new_id
                 fixed += 1
@@ -2350,7 +2617,7 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
         lines.append(f'  --- Range: {growth_total_min} - {growth_total_max}  Avg: {avg:.1f} ---')
     lines.append('')
 
-    lines.append('=== Weapon Effect Changes ===')
+    lines.append('=== Weapon Effect / Attribute Changes ===')
     eff_changed = 0
     for item_id in range(256):
         off = rom_offset(ITEM_TABLE_ADDR) + item_id * ITEM_DATA_SIZE
@@ -2359,15 +2626,32 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
         stored_id = data[off + 6]
         if stored_id != item_id:
             continue
+        item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
+        wep_type = data[off + 7]
+        type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
+
+        # Weapon effect ID at offset 0x1F
         orig_eff = orig_data[off + 0x1F] if off < len(orig_data) else 0
         mod_eff = data[off + 0x1F]
-        if orig_eff != mod_eff:
-            wep_type = data[off + 7]
-            type_name = WEAPON_TYPE_NAMES[wep_type] if wep_type < 8 else f'type{wep_type}'
-            from_name = EFFECT_NAMES.get(orig_eff, f'0x{orig_eff:02X}')
-            to_name = EFFECT_NAMES.get(mod_eff, f'0x{mod_eff:02X}')
-            item_name = ITEM_NAMES.get(item_id, f'0x{item_id:02X}')
-            lines.append(f'  {item_name} ({type_name}): {from_name} -> {to_name}')
+        eff_change = orig_eff != mod_eff
+
+        # Brave/reaver attribute bits at offset 0x08
+        orig_attrs = struct.unpack_from('<I', orig_data, off + 0x08)[0] if off + 4 < len(orig_data) else 0
+        mod_attrs = struct.unpack_from('<I', data, off + 0x08)[0]
+        brave_added = (mod_attrs & 0x20) and not (orig_attrs & 0x20)
+        reaver_added = (mod_attrs & 0x100) and not (orig_attrs & 0x100)
+
+        if eff_change or brave_added or reaver_added:
+            parts = []
+            if eff_change:
+                from_name = EFFECT_NAMES.get(orig_eff, f'0x{orig_eff:02X}')
+                to_name = EFFECT_NAMES.get(mod_eff, f'0x{mod_eff:02X}')
+                parts.append(f'effect: {from_name} -> {to_name}')
+            if brave_added:
+                parts.append('+BRAVE')
+            if reaver_added:
+                parts.append('+REAVER')
+            lines.append(f'  {item_name} ({type_name}): {", ".join(parts)}')
             eff_changed += 1
     if eff_changed == 0:
         lines.append('  (none)')
@@ -2435,6 +2719,17 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
         _vprint("")
 
     original_data = bytearray(rom.data)
+
+    # Preserve original support data (affinity + supportInfoPtr) per PID slot
+    # so recruitment swaps don't change who supports whom.
+    saved_support = {}
+    for pid in range(1, 256):
+        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        if off + PINFO_SIZE > len(original_data):
+            break
+        affinity = original_data[off + 9]
+        support_ptr = _U32.unpack_from(original_data, off + 0x2C)[0]
+        saved_support[pid] = (affinity, support_ptr)
 
     recruit_rules = config.get('recruitment_randomization', {})
     recruit_enabled = recruit_rules.get('enabled', False)
@@ -2511,7 +2806,7 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
                 palette_pids.add(pid)
         elif include_bosses:
             palette_pids |= BOSS_PIDS
-        pal_count = randomize_palette_mappings(rom, palette_pids, original_jids)
+        pal_count = randomize_palette_mappings(rom, palette_pids, original_jids, config)
         if pal_count:
             _vprint(f"Updated palette mappings for {pal_count} unit(s)")
 
@@ -2565,6 +2860,18 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     resolved_seed = seed if seed is not None else config.get('seed', None)
     _write_report(original_data, rom, config, resolved_seed, output_path)
+
+    # Restore original support data so each PID slot keeps its original
+    # support relationships and affinity regardless of randomization.
+    for pid in range(1, 256):
+        if pid not in saved_support:
+            continue
+        off = rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE
+        if off + PINFO_SIZE > len(rom.data):
+            break
+        orig_affinity, orig_support_ptr = saved_support[pid]
+        _U32.pack_into(rom.data, off + 0x2C, orig_support_ptr)
+        rom.data[off + 9] = orig_affinity
 
     if output_path:
         out = output_path

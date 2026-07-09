@@ -39,6 +39,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.manakete_count = tk.IntVar(value=1)
         self.include_soldier = tk.BooleanVar(value=False)
         self.palette_mapping = tk.BooleanVar(value=True)
+        self.portrait_palettes = tk.BooleanVar(value=False)
         self.affinity_randomization = tk.BooleanVar(value=False)
         self.class_omit = tk.StringVar(value="BARD")
 
@@ -96,6 +97,8 @@ class FE8RandomizerGUI(tk.Tk):
         self.fx_eclipse = tk.IntVar(value=1)
         self.fx_devil = tk.IntVar(value=5)
         self.fx_stone = tk.IntVar(value=1)
+        self.fx_brave = tk.IntVar(value=5)
+        self.fx_reaver = tk.IntVar(value=3)
 
         # Recruitment Settings
         self.recruit_enabled = tk.BooleanVar(value=False)
@@ -201,7 +204,8 @@ class FE8RandomizerGUI(tk.Tk):
 
         ttk.Checkbutton(card, text="Allow Soldier (no promotion path)", variable=self.include_soldier).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Checkbutton(card, text="Auto-map custom palettes to new classes", variable=self.palette_mapping).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Generate portrait-based palettes for new classes", variable=self.portrait_palettes).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=2)
 
     def _update_omit_status(self):
         omitted = [x.strip().upper() for x in self.class_omit.get().split(",") if x.strip()]
@@ -402,6 +406,11 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(fx, text="% chance per weapon:").grid(row=1, column=0, sticky=tk.W, padx=15, pady=2)
         ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_enabled_pct, width=5).grid(row=1, column=1, padx=6, sticky=tk.W)
 
+        ttk.Label(fx, text="Brave attr bit %:").grid(row=2, column=2, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_brave, width=5).grid(row=2, column=3, padx=6, sticky=tk.W)
+        ttk.Label(fx, text="Reaver attr bit %:").grid(row=3, column=2, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(fx, from_=0, to=100, textvariable=self.fx_reaver, width=5).grid(row=3, column=3, padx=6, sticky=tk.W)
+
         effects = [
             ("Poison weight:", self.fx_poison),
             ("Nosferatu weight:", self.fx_nosferatu),
@@ -507,6 +516,7 @@ class FE8RandomizerGUI(tk.Tk):
                 "omit_classes": _omit_list(self.class_omit.get()),
                 "include_soldier": self.include_soldier.get(),
                 "palette_mapping": self.palette_mapping.get(),
+                "portrait_palettes": self.portrait_palettes.get(),
             },
             "growth_randomization": {
                 "character": _mode(self.growth_char.get(), ["shuffle", "random", "pool"]),
@@ -561,6 +571,8 @@ class FE8RandomizerGUI(tk.Tk):
                 "eclipse": self.fx_eclipse.get(),
                 "devil": self.fx_devil.get(),
                 "stone": self.fx_stone.get(),
+                "brave": self.fx_brave.get(),
+                "reaver": self.fx_reaver.get(),
             },
             "recruitment_randomization": {
                 "enabled": self.recruit_enabled.get(),
@@ -653,6 +665,7 @@ class FE8RandomizerGUI(tk.Tk):
             self.class_omit.set(", ".join(c.get("omit_classes", [])))
             self.include_soldier.set(_bool(c.get("include_soldier")))
             self.palette_mapping.set(c.get("palette_mapping", True))
+            self.portrait_palettes.set(c.get("portrait_palettes", False))
 
             g = d.get("growth_randomization", {})
             self.growth_char.set(_str(g.get("character")))
@@ -709,6 +722,8 @@ class FE8RandomizerGUI(tk.Tk):
             self.fx_eclipse.set(fx.get("eclipse", 1))
             self.fx_devil.set(fx.get("devil", 5))
             self.fx_stone.set(fx.get("stone", 1))
+            self.fx_brave.set(fx.get("brave", 5))
+            self.fx_reaver.set(fx.get("reaver", 3))
 
             rr = d.get("recruitment_randomization", {})
             self.recruit_enabled.set(_bool(rr.get("enabled")))
