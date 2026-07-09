@@ -17,7 +17,8 @@ from fe8rom import (
     PALETTE_ENTRY_SIZE, PALETTE_TABLE_ADDR, PALETTE_SET_SIZE,
     PALETTE_INTERLEAVE_COUNT, PALETTE_SUB_SIZE, PALETTE_COLORS,
     read_palette_set, deinterleave_palette, interleave_palettes,
-    write_palette_set, color_distance, pal15_to_rgb, rgb_to_pal15,
+    write_palette_set, lz77_compress, lz77_compressed_size,
+    color_distance, pal15_to_rgb, rgb_to_pal15,
     swap_portrait_entries, _U16, _U32, _EVENT_CMDS_WITH_UD,
 )
 
@@ -2110,7 +2111,13 @@ def _get_palette_color(pal_set: bytearray, slot: int, color_idx: int) -> int:
 def _generate_portrait_palette(rom: ROM, pid: int, source_pal_id: int,
                                 new_jid: int) -> int:
     """Generate a new palette for PID by adapting their original palette
-    colors to the target class template. Returns the new palette ID or 0."""
+    colors to the target class template.  Writes the new palette data
+    in-place at the original palette's ROM address, but ONLY if the new
+    compressed data fits within the original compressed slot.  Uses 16
+    portrait-mapped colors repeated across all 5 sub-palettes to keep
+    LZ77 compressed size small.
+
+    Returns the palette ID on success, or 0 on failure."""
     target_pal_id = _find_class_template_palette_id(rom, new_jid)
     if target_pal_id == 0:
         return 0
@@ -2148,18 +2155,32 @@ def _generate_portrait_palette(rom: ROM, pid: int, source_pal_id: int,
         new_player[tc_off] = best_sc & 0xFF
         new_player[tc_off + 1] = (best_sc >> 8) & 0xFF
 
-    # Build the new 5-palette set: replace PLAYER, keep others from target
-    subs = []
-    for slot in range(PALETTE_INTERLEAVE_COUNT):
-        if slot == 0:
-            subs.append(new_player)
-        else:
-            subs.append(deinterleave_palette(target_set, slot))
-    new_set = interleave_palettes(subs)
+    # Build 160-byte set: repeat the same 16 portrait colors across all
+    # 5 sub-palettes.  Heavy repetition makes LZ77 compress small.
+    new_set = interleave_palettes([bytes(new_player)] * PALETTE_INTERLEAVE_COUNT)
 
-    pid_name = PID(pid).name if pid in PID._value2member_map_ else f'p{pid}'
-    new_pal_id = write_palette_set(rom, new_set, pid_name[:3])
-    return new_pal_id
+    # --- In-place overwrite at the original palette address ---
+    table_off = rom_offset(PALETTE_TABLE_ADDR) + source_pal_id * 16
+    orig_ptr = _U32.unpack_from(rom.data, table_off)[0]
+    if not (ROM_BASE <= orig_ptr < ROM_BASE + 0x1000000):
+        return 0
+    data_off = orig_ptr - ROM_BASE
+
+    orig_comp_size = lz77_compressed_size(rom.data, data_off)
+    if orig_comp_size == 0:
+        return 0
+
+    new_compressed = lz77_compress(new_set)
+    new_aligned = (len(new_compressed) + 3) & ~3
+
+    if new_aligned > orig_comp_size:
+        return 0  # new data too large to fit in original slot
+
+    # Write compressed data + zero-pad to fill the original slot exactly
+    rom.data[data_off:data_off + orig_comp_size] = (
+        new_compressed + b'\x00' * (orig_comp_size - len(new_compressed)))
+
+    return source_pal_id
 
 
 def _update_palette_index(rom: ROM, pid: int, new_pal_id: int, slot: int = 1) -> None:
@@ -2413,9 +2434,8 @@ def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
 
             new_pal_id = _generate_portrait_palette(rom, pid, source_pal_id, new_jid)
             if new_pal_id > 0:
-                _update_palette_index(rom, pid, new_pal_id)
                 count += 1
-                _vprint(f"  Generated portrait palette for PID {pid} (0x{new_pal_id:02X})")
+                _vprint(f"  Generated portrait palette for PID {pid} (pal 0x{new_pal_id:02X})")
 
     # (D) Borrow PaletteIndexTable for PIDs with all-zero entries
     for pid in sorted(pid_set):
