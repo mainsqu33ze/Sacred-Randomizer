@@ -22,6 +22,7 @@ class_randomization:
   include_soldier: false     # Soldier has no promotion path; excluded from player pools by default
   palette_mapping: true       # Auto-update palette class table to apply custom palettes to new classes
   portrait_palettes: true     # Generate unique palettes from a character's original colors onto new class templates
+  gender_lock: false          # Lock randomized classes to same gender as character (male/female variants swapped automatically)
 
 # ---------------------------------------------------------------------------
 # GROWTH RATES

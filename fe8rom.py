@@ -575,6 +575,38 @@ def lz77_decompress(data: bytearray, offset: int) -> Optional[bytearray]:
     return result[:decomp_size]
 
 
+def lz77_compressed_size(data: bytearray, offset: int) -> int:
+    """Return the number of compressed bytes consumed starting at *offset*.
+    Returns 0 if the data doesn't start with a valid LZ77 header."""
+    if offset + 4 > len(data) or data[offset] != 0x10:
+        return 0
+    decomp_size = data[offset+1] | (data[offset+2] << 8) | (data[offset+3] << 16)
+    result_len = 0
+    pos = offset + 4
+    while result_len < decomp_size:
+        if pos >= len(data):
+            return pos - offset
+        flags = data[pos]
+        pos += 1
+        for bit in range(8):
+            if result_len >= decomp_size:
+                return pos - offset
+            if pos >= len(data):
+                return pos - offset
+            if flags & (0x80 >> bit):
+                result_len += 1
+                pos += 1
+            else:
+                if pos + 2 > len(data):
+                    return pos - offset
+                pos += 2
+                block = data[pos - 2] | (data[pos - 1] << 8)
+                disp = block & 0x0FFF
+                n = ((block >> 12) & 0xF) + 3
+                result_len += n
+    return pos - offset
+
+
 def lz77_compress(data: bytearray) -> bytearray:
     n = len(data)
     header = bytearray([0x10, n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF])
@@ -693,9 +725,84 @@ def _find_next_palette_id(rom: ROM) -> int:
     return -1
 
 
+_GBA_ROM_16MB = 16 * 1024 * 1024   # 16 MB — GBA ROM address space boundary
+
+# Running write pointer for palette data written into free space within the
+# original 16 MB ROM.  Initialized lazily on first use.
+_palette_write_ptr = None
+
+
+def reset_palette_write_ptr():
+    """Reset the palette write pointer.  Call at the start of each run."""
+    global _palette_write_ptr
+    _palette_write_ptr = None
+
+
+class _PaletteAllocator:
+    """Bump allocator that carves palette data from free ROM blocks."""
+
+    def __init__(self, rom: ROM):
+        PAL_REGION_START = 0x00EF8000
+        PAL_REGION_END   = 0x00F00000
+        MIN_BLOCK = 64
+        blocks = []
+        block_start = None
+        for i in range(min(len(rom.data), _GBA_ROM_16MB)):
+            b = rom.data[i]
+            if b == 0x00:
+                if block_start is None:
+                    block_start = i
+            else:
+                if block_start is not None:
+                    size = i - block_start
+                    if size >= MIN_BLOCK and not (PAL_REGION_START <= block_start < PAL_REGION_END):
+                        blocks.append((block_start, size))
+                    block_start = None
+        if block_start is not None:
+            size = len(rom.data) - block_start
+            if size >= MIN_BLOCK and not (PAL_REGION_START <= block_start < PAL_REGION_END):
+                blocks.append((block_start, size))
+        # Sort largest-first so we use the biggest block first
+        blocks.sort(key=lambda x: -x[1])
+        self._blocks = blocks
+        self._idx = 0    # current block index
+        self._pos = 0    # offset within current block
+
+    def alloc(self, nbytes: int) -> int:
+        """Return a GBA address for *nbytes* bytes, or -1 if no space."""
+        while self._idx < len(self._blocks):
+            base, size = self._blocks[self._idx]
+            aligned = (nbytes + 3) & ~3
+            if self._pos + aligned <= size:
+                addr = base + self._pos
+                self._pos += aligned
+                return ROM_BASE + addr
+            self._idx += 1
+            self._pos = 0
+        return -1
+
+
+_palette_allocator = None
+
+
+def get_palette_allocator(rom: ROM):
+    """Return (or create) the palette allocator for this ROM."""
+    global _palette_allocator
+    if _palette_allocator is None:
+        _palette_allocator = _PaletteAllocator(rom)
+    return _palette_allocator
+
+
+def reset_palette_allocator():
+    """Reset the palette allocator.  Call at the start of each run."""
+    global _palette_allocator
+    _palette_allocator = None
+
+
 def write_palette_set(rom: ROM, palette_data: bytearray, name: str = '') -> int:
-    """Write a new 5-palette set by appending to the end of the ROM.
-    Expands rom.data as needed. Returns palette ID or -1."""
+    """Write a new 5-palette set into free space within the 16 MB ROM
+    boundary.  Returns palette ID or -1."""
+    global _palette_write_ptr
     if len(palette_data) != PALETTE_SET_SIZE:
         return -1
 
@@ -707,13 +814,25 @@ def write_palette_set(rom: ROM, palette_data: bytearray, name: str = '') -> int:
     if pid < 0:
         return -1
 
-    # Append compressed data at the end of the ROM
-    write_start = len(rom.data)
-    if write_start + aligned > _MAX_ROM_SIZE:
-        return -1  # out of ROM space (max 32 MB)
-    rom.data.extend(compressed)
-    if aligned > needed:
-        rom.data.extend(b'\x00' * (aligned - needed))
+    # Initialize the write pointer on first use
+    if _palette_write_ptr is None:
+        _palette_write_ptr = _find_palette_free_space(rom)
+        if _palette_write_ptr < 0:
+            return -1  # no free space available
+
+    write_start = _palette_write_ptr
+    end = write_start + aligned
+    if end > _GBA_ROM_16MB:
+        return -1  # out of space within 16 MB
+
+    # Ensure ROM data is large enough (pad with zeros if needed)
+    if end > len(rom.data):
+        rom.data.extend(b'\x00' * (end - len(rom.data)))
+
+    rom.data[write_start:write_start + aligned] = (
+        compressed + b'\x00' * (aligned - needed))
+    _palette_write_ptr = end
+
     data_gba = ROM_BASE + write_start
 
     # Write palette table entry

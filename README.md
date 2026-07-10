@@ -46,7 +46,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 
 | Section | What it does |
 | --- | --- |
-| `class_randomization` | Shuffles classes among playable characters |
+| `class_randomization` | Shuffles classes among playable characters (supports gender-locking) |
 | `recruitment_randomization` | Shuffles which character is recruited in each story slot |
 | `growth_randomization` | Randomizes stat growth rates (character & class) |
 | `base_stat_randomization` | Randomizes or swaps base stats |
@@ -76,6 +76,7 @@ class_randomization:
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
+  gender_lock: false     # Lock classes to same gender as character
   palette_mapping: true       # Auto-update palette class table for custom palettes
   portrait_palettes: false    # Generate class palette from character's portrait colors
 ```
@@ -89,6 +90,8 @@ Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
 `portrait_palettes: false` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data.
+
+`gender_lock: false` (default) when set to `true`, restricts class randomization so each character only receives classes appropriate to their gender. Gender is inferred from the character's original class before randomization. Classes with male/female variants (e.g., Cavalier/Cavalier_F) are automatically swapped to the correct variant. Gender-exclusive classes (Fighter, Warrior, Berserker, Pirate, Monk, Priest, Thief, Journeyman, Pupil for males; Cleric, Troubadour, Valkyrie, Dancer, Recruit, Pegasus Knight, Falcon Knight for females) are only assigned to characters of that gender. When `manakete_count > 0`, Manakete assignments are limited to female-class characters. Also applies to bosses when `include_bosses: true` under `enemy_randomization`.
 
 ### recruitment_randomization
 
@@ -330,6 +333,7 @@ enemy_randomization:
   randomize_monster_classes: false   # true = randomize monster enemies too
   include_monsters: false            # true = let enemies become monster classes
   include_bosses: false              # true = include bosses (PIDs 0x40–0x63, etc.)
+  gender_lock: false                 # true = lock boss classes to same gender as boss
   weapon_upgrade_chance: 25          # % chance per unit to get a weapon tier upgrade
   omit_classes: []                   # JID names to exclude, e.g. [SHAMAN]
   boss_buffs:                        # extra buffs when include_bosses: true
@@ -369,6 +373,7 @@ class_randomization:
   manakete_count: 1
   omit_classes: []
   include_soldier: false
+  gender_lock: false
   palette_mapping: true
 
 recruitment_randomization:
@@ -454,6 +459,7 @@ enemy_randomization:
   randomize_monster_classes: false
   include_monsters: false
   include_bosses: false
+  gender_lock: false
   weapon_upgrade_chance: 25
   omit_classes: []
   boss_buffs:
