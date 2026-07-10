@@ -189,6 +189,25 @@ CHAR_LOCK_ATTRS = {
     PID.EPHRAIM: (0x14, 0x20000000, [0x78, 0x92]),
 }
 
+SPELL_ASSOC_ADDR = 0x088AFF68
+SPELL_ASSOC_ENTRY_SIZE = 16
+
+WTYPE_EFX_MAP = {
+    3: 2,    # bow
+    4: 38,   # staff
+    5: 22,   # anima
+    6: 31,   # light
+    7: 29,   # dark
+}
+
+WTYPE_FLAG_MAP = {
+    3: 0,    # bow
+    4: 0,    # staff
+    5: 2,    # anima
+    6: 5,    # light
+    7: 1,    # dark
+}
+
 CHAPTER_NAMES = {
     0: 'Prologue', 1: 'Ch1: Escape!', 2: 'Ch2: The Protected',
     3: 'Ch3: Bandits of Borgo', 4: 'Ch4: Ancient Horrors',
@@ -1485,6 +1504,21 @@ def _fix_prf_weapon_types(rom: ROM, modified_pids: Set[int]) -> None:
                 orig_type = 0 if pid == PID.EIRIKA else 1
                 new_type = orig_type if orig_type in usable else usable[0]
                 rom.data[off + 7] = new_type
+
+            efx = WTYPE_EFX_MAP.get(rom.data[off + 7])
+            if efx is not None:
+                spell_base = rom_offset(SPELL_ASSOC_ADDR)
+                scan = spell_base
+                terminator = spell_base + 0x800
+                while scan < terminator:
+                    entry_item = _U16.unpack_from(rom.data, scan)[0]
+                    if entry_item == 0xFFFF:
+                        break
+                    if entry_item == item_id:
+                        _U16.pack_into(rom.data, scan + 4, efx)
+                        _U16.pack_into(rom.data, scan + 14, WTYPE_FLAG_MAP.get(rom.data[off + 7], 0))
+                        break
+                    scan += SPELL_ASSOC_ENTRY_SIZE
 
 
 # ---------------------------------------------------------------------------
