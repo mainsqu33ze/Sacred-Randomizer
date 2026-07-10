@@ -189,7 +189,7 @@ CHAR_LOCK_ATTRS = {
     PID.EPHRAIM: (0x14, 0x20000000, [0x78, 0x92]),
 }
 
-SPELL_ASSOC_ADDR = 0x088AFF68
+SPELL_ASSOC_ADDR = 0x088AFBD8
 SPELL_ASSOC_ENTRY_SIZE = 16
 
 WTYPE_EFX_MAP = {
@@ -1509,7 +1509,7 @@ def _fix_prf_weapon_types(rom: ROM, modified_pids: Set[int]) -> None:
             if efx is not None:
                 spell_base = rom_offset(SPELL_ASSOC_ADDR)
                 scan = spell_base
-                terminator = spell_base + 0x800
+                terminator = scan + 0x1000
                 while scan < terminator:
                     entry_item = _U16.unpack_from(rom.data, scan)[0]
                     if entry_item == 0xFFFF:
