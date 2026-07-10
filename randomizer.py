@@ -3048,5 +3048,62 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
             out = base[0] + '_randomized.' + base[1]
         else:
             out = rom_path + '_randomized.gba'
+# -------------------------------------------------------------------------
+    # --- Dynamic Range Adjustment for Story-Exclusive Weapons ---
+    # -------------------------------------------------------------------------
+    print("Adjusting exclusive weapon ranges based on randomized weapon types...")
+    
+    # Weapon IDs for the personal/sacred weapons
+    EXCLUSIVE_WEAPONS = {
+        0x09: "Rapier",
+        0x78: "Reginleif",
+        0x85: "Sieglinde",
+        0x92: "Siegmund"
+    }
+
+    # Offsets inside the 36-byte (0x24) item structure
+    TYPE_OFFSET = 0x07
+    RANGE_OFFSET = 0x19
+
+    # Resolve base offset for the item table in the ROM
+    # Using 'rom_offset' helper if defined, otherwise falling back to ROM_BASE math
+    try:
+        item_table_base = rom_offset(ITEM_TABLE_ADDR)
+    except NameError:
+        item_table_base = ITEM_TABLE_ADDR - ROM_BASE
+
+    for item_id, name in EXCLUSIVE_WEAPONS.items():
+        # Calculate the starting ROM address of this item entry
+        item_entry_offset = item_table_base + (item_id * ITEM_DATA_SIZE)
+        
+        # Read the current weapon type (Sword=0, Lance=1, Axe=2, Bow=3, Staff=4, Anima=5, Light=6, Dark=7)
+        wpn_type = rom.data[item_entry_offset + TYPE_OFFSET]
+        
+        # Determine appropriate range based on the weapon type
+        if wpn_type == 3:  # Bow
+            # 2-2 Range
+            min_rng = 2
+            max_rng = 2
+        elif wpn_type in (5, 6, 7):  # Anima, Light, Dark Magic
+            # 1-2 Range
+            min_rng = 1
+            max_rng = 2
+        elif wpn_type == 4:  # Staff
+            # Staves typically default to 1-1 range or 1-Mag/2 (handled by staff effect),
+            # but setting it to 1-1 base range keeps it clean.
+            min_rng = 1
+            max_rng = 1
+        else:  # Swords, Lances, Axes, Claws, etc.
+            # 1-1 Range
+            min_rng = 1
+            max_rng = 1
+
+        # Encode: Max range in upper nibble, min range in lower nibble
+        encoded_range = (min_rng << 4) | max_rng
+        
+        # Write the dynamic range byte back to the ROM
+        rom.write_u8(item_entry_offset + RANGE_OFFSET, encoded_range)
+        
+        print(f"  -> {name} (ID: 0x{item_id:02X}) is Type {wpn_type}. Setting range to {min_rng}-{max_rng} (encoded: 0x{encoded_range:02X})")
     rom.save(out)
     return out
