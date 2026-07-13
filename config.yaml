@@ -111,6 +111,8 @@ weapon_effects:
   eclipse: 1
   devil: 5
   stone: 1
+  brave: 0                 # Independent per-item % chance to gain Brave (extra attack) — uses attribute bit, not effect pool
+  reaver: 0                # Independent per-item % chance to gain Reaver (reverses weapon triangle) — uses attribute bit
 
 # ---------------------------------------------------------------------------
 # AFFINITIES

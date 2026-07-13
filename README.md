@@ -78,7 +78,7 @@ class_randomization:
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
   gender_lock: false     # Lock classes to same gender as character
   palette_mapping: true       # Auto-update palette class table for custom palettes
-  portrait_palettes: false    # Generate class palette from character's portrait colors
+  portrait_palettes: true     # Generate class palette from character's portrait colors
 ```
 
 `mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
@@ -89,7 +89,7 @@ Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has 
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
-`portrait_palettes: false` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data.
+`portrait_palettes: true` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data. Set to `false` to disable (characters will use class-default palettes after palette_mapping).
 
 `gender_lock: false` (default) when set to `true`, restricts class randomization so each character only receives classes appropriate to their gender. Gender is inferred from the character's original class before randomization. Classes with male/female variants (e.g., Cavalier/Cavalier_F) are automatically swapped to the correct variant. Gender-exclusive classes (Fighter, Warrior, Berserker, Pirate, Monk, Priest, Thief, Journeyman, Pupil for males; Cleric, Troubadour, Valkyrie, Dancer, Recruit, Pegasus Knight, Falcon Knight for females) are only assigned to characters of that gender. When `manakete_count > 0`, Manakete assignments are limited to female-class characters. Also applies to bosses when `include_bosses: true` under `enemy_randomization`.
 
@@ -217,6 +217,8 @@ item_randomization:
 - **`mode: shuffle`**: permutes all weapons across unit definitions without changing the pool.
 - Manaketes always get `[Dragonstone, Vulnerary, Vulnerary, empty]`.
 
+**Note on `randomize_events` + `loot_randomization`:** These are independent features that both affect GiveItem events. `randomize_events` replaces weapon-type items in GiveItem events using weapon pools (weapons only). `loot_randomization` replaces *all* items in GiveItem events using the full item pool (weapons, stat boosters, keys, etc.) and also covers chest items. If both are enabled, GiveItem events are patched twice — first by `randomize_events` (weapons only), then by `loot_randomization` (full pool overwriting the previous result). For most use cases, enabling `loot_randomization` alone is sufficient; `randomize_events` is useful when you want weapon-specific randomization of events without touching chests or non-weapon items.
+
 **Weapon rank transfer:** When a character's class changes, weapon ranks are adjusted to match the new class. Ranks for weapon types the new class can't use are zeroed out. For supported types, the character keeps whichever is higher — their existing rank or the class's base. Additionally, if the character had their highest rank in a type they can no longer use, that rank is transferred to their weakest supported type, so Eirika's S-rank swords aren't wasted when she becomes a Mage.
 
 **Prf weapon type fix:** When Eirika or Ephraim is randomized to a new class, their personal weapons (Rapier `0x09` / Sieglinde `0x85` for Eirika; Reginleif `0x78` / Siegmund `0x92` for Ephraim) get their `weapon_type` byte updated to a type their new class can wield. The Ability 4 byte (offset `0x21`) is set to `0x0A` (Eirika lock) or `0x14` (Ephraim lock), making weapons check PID instead of class. Lord-class attribute lock bits from the class data are also copied into the character's PersonalInfo attributes (offset `0x28`) — Eirika gets bits 17+28 (`0x10020000`), Ephraim gets bit 29 (`0x20000000`) — so the equipped character always passes the item lock check regardless of their current class. This ensures lords can always use their signature weapons even after class randomization.
@@ -277,9 +279,11 @@ weapon_effects:
   eclipse: 1           # extremely rare
   devil: 8
   stone: 3
+  brave: 5             # independent per-item % chance — adds Brave (extra attack) via attribute bit
+  reaver: 3            # independent per-item % chance — adds Reaver (reverses weapon triangle) via attribute bit
 ```
 
-Weights control how often each effect is chosen. Story weapons (Rapier, Sieglinde, etc.) and monster-exclusive items are never affected.
+Weights control how often each effect is chosen from the effect pool (poison/nosferatu/eclipse/devil/stone). Brave and reaver are **independent** — each weapon rolls separately against its `%` chance, orthogonal to the effect pool. A weapon can gain brave, reaver, and an effect simultaneously. Story weapons (Rapier, Sieglinde, etc.) and monster-exclusive items are never affected.
 
 ### affinity_randomization
 
@@ -375,6 +379,7 @@ class_randomization:
   include_soldier: false
   gender_lock: false
   palette_mapping: true
+  portrait_palettes: true
 
 recruitment_randomization:
   enabled: false
@@ -439,6 +444,8 @@ weapon_effects:
   eclipse: 1
   devil: 5
   stone: 1
+  brave: 0
+  reaver: 0
 
 affinity_randomization:
   enabled: false

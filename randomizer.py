@@ -1,6 +1,5 @@
 import random
 import struct
-from functools import lru_cache
 from typing import Any, Dict, List, Set, Tuple, Optional
 
 from fe8rom import (

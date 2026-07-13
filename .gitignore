@@ -9,8 +9,9 @@
 # Save files
 *.sav
 
-# Dev diagnostic scripts (underscore-prefixed)
+# Dev diagnostic scripts and test configs (underscore-prefixed)
 _*.py
+_*.yaml
 
 # Test outputs and configs (root-level only)
 /test_*
