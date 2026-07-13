@@ -2,7 +2,6 @@
 """FE8 Randomizer CLI - Randomize Fire Emblem: The Sacred Stones GBA ROM."""
 
 import argparse
-import sys
 import yaml
 from randomizer import apply_config
 
