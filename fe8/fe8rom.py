@@ -528,6 +528,11 @@ MONSTER_BLOCKED_ITEM_IDS = frozenset({
 
 BALLISTA_ITEM_IDS = frozenset({0x35, 0x36, 0x37})
 
+STAFF_ITEM_IDS = frozenset({
+    0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51,
+    0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 
+    0x59, 0x8C})
+
 # Palette mapping tables
 PALETTE_CLASS_TABLE_PTR_OFF = 0x575B4  # ROM offset of pointer to palette class table
 PALETTE_INDEX_TABLE_PTR_OFF = 0x57394  # ROM offset of pointer to palette index table

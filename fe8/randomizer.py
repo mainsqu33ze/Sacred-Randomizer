@@ -7,7 +7,7 @@ from .fe8rom import (
     CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE,
     WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID,
     MONSTER_BLOCKED_ITEM_IDS, BALLISTA_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS,
-    PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID,
+    PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, STAFF_ITEM_IDS,
     PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE,
     PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR,
     build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE,
@@ -1341,6 +1341,8 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
         if stored_id != item_id or wep_type > 7:
             continue
         if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if item_id in STAFF_ITEM_IDS:
             continue
         if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
