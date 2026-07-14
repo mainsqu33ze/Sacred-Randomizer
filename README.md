@@ -31,7 +31,6 @@ python gui.py
 
 The GUI covers most common options across tabbed panels, but has a few **limitations** compared to using a `config.yaml` directly:
 
-- Exposes fewer knobs — no `mean` field for growth/stat gaussians, no number/scaling mode for class growths, weapon stat mode is on/off only (no multiplier).
 - Cannot produce a `--dump` of the default config.
 - Seed cannot be overridden via CLI flag (set it inside the window).
 - Requires a display (Tkinter, not headless-friendly).
@@ -124,13 +123,13 @@ When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unuse
 
 ### growth_randomization
 
-Controls how fast units gain stats per level-up. You can set modes for **character** growths (affects playable units) and **class** growths (affects generic enemies):
+Controls how fast units gain stats per level-up. You can set modes for **character** growths (affects playable units) and **class** growths (affects all instances of each class — both player and enemy):
 
 ```yaml
 growth_randomization:
   character: random       # false | shuffle | random | pool
   class: random           # false | shuffle | random | random_buff | pool | <number>
-  class_buff_range: 0.5   # ±range for random_buff mode (e.g. 0.3 = ±30%)
+  class_buff_range: 0.5   # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
   min: 0                  # clamp floor
   max: 100                # clamp ceiling
   mean: null              # gaussian center (null = original value)
@@ -146,9 +145,9 @@ growth_randomization:
 | `random` | ✅ | ✅ | Gaussian with optional mean/stddev |
 | `pool` | ✅ | ✅ | Distribute `pool_total` across stats randomly |
 | `<number>` | — | ✅ | Scale all growths by factor (e.g. `1.3` = +30%) |
-| `random_buff` | — | ✅ | Each growth × `1.0 ± random(0, class_buff_range)` |
+| `random_buff` | — | ✅ | Each growth × `1.0 + random(0, class_buff_range)` |
 
-Class growths affect JIDs 1–128 (all classes including monsters), which primarily impacts generic enemy stats since playable characters use their own growth rates.
+Class growths affect all instances of each class (JIDs 1–128 including monsters). Since playable characters also belong to classes, class growth changes affect both player and enemy units using that class.
 
 ### base_stat_randomization
 
@@ -343,7 +342,7 @@ enemy_randomization:
   boss_buffs:                        # extra buffs when include_bosses: true
     growths:
       mode: false                    # false | <number> | random_buff | random
-      buff_range: 0.3                # ±range for random_buff mode
+      buff_range: 0.3                # range for random_buff mode
       mean: null
       stddev: 10
     base_stats:

@@ -39,7 +39,7 @@ class_randomization:
 growth_randomization:
   character: random            # Per-character growth rates
   class: random                # Per-class growth rates (mostly impacts generic enemies)
-  class_buff_range: 0.5        # +/- range for 'random_buff' mode (e.g. 0.3 = ±30%)
+  class_buff_range: 0.5        # range for 'random_buff' mode (e.g. 0.3 = stats scaled by 1.0–1.3)
   min: 0                       # Minimum clamp for all growth modes
   max: 255                     # Maximum clamp for all growth modes
   mean: null                   # Mean for 'random' normal distribution (null = use original value)
@@ -151,12 +151,12 @@ enemy_randomization:
   boss_buffs:                            # Applied only when include_bosses: true
     growths:
       mode: random_buff                        # false | <number> | random_buff | random
-      buff_range: 0.3                    # ±range for random_buff mode
+      buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
       mean: null                         # mean for random mode
       stddev: 10                         # stddev for random mode
     base_stats:
       mode: 1.5                        # false | <number> | random_buff | random
-      buff_range: 0.3                    # ±range for random_buff mode
+      buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
       mean: null                         # mean for random mode
       stddev: 3                          # stddev for random mode
     max_weapon_ranks: true               # max all weapon types the class can use to S-rank
