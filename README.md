@@ -1,6 +1,6 @@
-# FE8 Randomizer
+# Sacred Randomizer
 
-Randomizes **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs.
+An extremely fast, efficient randomizer for **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs. Processes a 16 MB ROM in under a second with zero dependencies beyond Python itself.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ cd FE8-Custom-Randomizer
 pip install .
 ```
 
-This installs the `fe8-randomizer` CLI command and all dependencies (`pyyaml`, `tqdm`).
+This installs the `sacred-randomizer` CLI command and all dependencies (`pyyaml`, `tqdm`).
 
 For development (editable install + test dependencies):
 
@@ -28,7 +28,7 @@ pip install -e ".[dev]"
 **New users** — the fastest way to get a randomized ROM:
 
 ```bash
-fe8-randomizer Fire_Emblem_8.GBA -c config.yaml
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml
 ```
 
 This uses the included `config.yaml` which gives a fun, balanced experience out of the box. The randomized ROM is saved as `Fire_Emblem_8_randomized.gba` alongside the original.
@@ -37,13 +37,13 @@ This uses the included `config.yaml` which gives a fun, balanced experience out 
 
 ```bash
 # Use a specific seed (reproducible)
-fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -s 42
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -s 42
 
 # Custom output path
-fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -o my_randomized.gba
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -o my_randomized.gba
 
 # See what the randomizer is doing step-by-step
-fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -v
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -v
 
 # Print the full default config to a file for editing
 fe8-randomizer Fire_Emblem_8.GBA --dump > my_config.yaml

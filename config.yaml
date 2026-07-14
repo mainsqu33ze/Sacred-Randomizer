@@ -1,12 +1,12 @@
-# FE8 Randomizer Configuration
-# =============================
+# Sacred Randomizer Configuration
+# ================================
 #
 # Set to true to enable each feature. See comments below each option.
 # First-time users: the defaults below give a fun, balanced randomizer experience.
 # For advanced options, tweak the numbers under each feature.
 #
 # Override the seed on the command line:
-#   python fe8_randomizer.py ROM.GBA -c config.yaml --seed 12345
+#   sacred-randomizer ROM.GBA -c config.yaml --seed 12345
 
 seed: 42  # 0 = random (uses system time); also overridable via --seed
 
