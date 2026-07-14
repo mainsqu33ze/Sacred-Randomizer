@@ -553,7 +553,7 @@ def _scan_loot_events(rom: ROM, giveitem_events: List[Tuple[int, int, str]],
     loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     loot_excluded.update(PROMOTION_ITEM_IDS)
     loot_excluded.update({0x3D, 0x44, 0x8A})
-    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5, 0xA7, 0x8A, 0x77})
     if not include_ballista:
         loot_excluded.update(BALLISTA_ITEM_IDS)
     seen = set()
@@ -569,7 +569,7 @@ def _build_loot_pool(include_ballista: bool = False) -> List[int]:
     excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     excluded.update({0x3D, 0x44, 0x8A})
     excluded.update(PROMOTION_ITEM_IDS)
-    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5, 0xA7, 0xBA, 0x77})
     if not include_ballista:
         excluded.update(BALLISTA_ITEM_IDS)
     return [item_id for item_id in range(1, 0xC0) if item_id not in excluded]
