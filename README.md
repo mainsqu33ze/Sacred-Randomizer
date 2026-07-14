@@ -10,8 +10,8 @@ An extremely fast, efficient randomizer for **Fire Emblem: The Sacred Stones** (
 ## Installation
 
 ```bash
-git clone https://github.com/yourname/FE8-Custom-Randomizer.git
-cd FE8-Custom-Randomizer
+git clone https://github.com/mainsqu33ze/Sacred-Randomizer.git
+cd Sacred-Randomizer
 pip install .
 ```
 
@@ -399,7 +399,7 @@ Classes are grouped by **movement category** (flyer / water / mountain / foot) s
 ## Full reference config
 
 ```yaml
-# FE8 Randomizer — every option with defaults
+# Sacred Randomizer — every option with defaults
 
 seed: 0
 
