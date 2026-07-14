@@ -2815,7 +2815,7 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
     for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
         orig_cd = CharacterData.__new__(CharacterData)
         orig_raw = orig_data[rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE:][:PINFO_SIZE]
-        orig_cd.jidDefault = orig_raw[4]
+        orig_cd.jidDefault = orig_raw[5]
 
         mod_cd = CharacterData(rom, pid)
         if orig_cd.jidDefault != mod_cd.jidDefault:
