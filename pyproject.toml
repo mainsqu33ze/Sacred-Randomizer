@@ -23,9 +23,10 @@ dev = [
 ]
 
 [project.scripts]
-fe8-randomizer = "fe8_randomizer:main"
+fe8-randomizer = "fe8.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fe8*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-

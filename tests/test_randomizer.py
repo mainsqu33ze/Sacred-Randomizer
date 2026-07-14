@@ -9,7 +9,7 @@ import struct
 
 import pytest
 
-from fe8rom import (
+from fe8.fe8rom import (
     JID,
     PID,
     ROM_BASE,
@@ -22,7 +22,7 @@ from fe8rom import (
     rgb_to_pal15,
     rom_offset,
 )
-from randomizer import (
+from fe8.randomizer import (
     MALE_FEMALE_PAIRS,
     MONSTER_BLOCKED_ITEM_IDS,
     PROMOTION_ITEM_IDS,

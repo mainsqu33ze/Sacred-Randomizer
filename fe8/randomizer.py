@@ -2,7 +2,7 @@ import random
 import struct
 from typing import Any, Dict, List, Set, Tuple, Optional
 
-from fe8rom import (
+from .fe8rom import (
     ROM, CharacterData, ClassData, ItemData, PID, JID,
     CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE,
     WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID,
@@ -696,7 +696,7 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     # original data, so the face shown matches the character who now occupies
     # that PID slot.  Copy from saved originals instead of sequential swaps
     # to avoid corrupting the permutation mapping.
-    from fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
+    from .fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
     portrait_snap = {}
     for pid in pids:
         slot = PID_TO_PORTRAIT_SLOT.get(pid)
