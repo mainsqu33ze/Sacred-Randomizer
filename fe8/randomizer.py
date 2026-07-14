@@ -741,6 +741,11 @@ def _sync_shared_pid_classes(rom: ROM) -> None:
                 continue
             if cd_src.jidDefault != cd_dst.jidDefault:
                 cd_dst.jidDefault = cd_src.jidDefault
+                jd = ClassData(rom, cd_src.jidDefault)
+                new_ranks = list(cd_dst.baseWexp)
+                for i in range(8):
+                    new_ranks[i] = S_RANK_WEXP if jd.baseWexp[i] > 0 else 0
+                cd_dst.baseWexp = new_ranks
                 cd_dst.write(rom)
                 _vprint(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
         except Exception:
@@ -1999,6 +2004,7 @@ def randomize_enemies(rom: ROM, config: dict,
             cd.write(rom)
 
     # Phase B + C: UD array class overrides and items
+    boss_final_classes = {}
     if rand_classes or rand_items:
         include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
         if weapon_pools is None and rand_items:
@@ -2044,6 +2050,8 @@ def randomize_enemies(rom: ROM, config: dict,
 
                 if rand_classes and new_jid != orig_jid:
                     rom.data[arr_pos + 1] = new_jid
+                    if pid in BOSS_PIDS:
+                        boss_final_classes[pid] = new_jid
 
                 if rand_items:
                     if not randomize_monster_classes and new_jid in MONSTER_WEAPON_POOLS:
@@ -2094,6 +2102,31 @@ def randomize_enemies(rom: ROM, config: dict,
 
             if tqdm: pbar.update(1)
         if tqdm: pbar.close()
+
+    # Sync CharacterData for bosses whose UD array class diverged from Phase A.
+    # Phase A and Phase B+C pick classes independently; weapon ranks were set
+    # based on Phase A's pick but the game uses the UD array class in battle.
+    if boss_final_classes and boss_max_ranks:
+        for pid, final_jid in boss_final_classes.items():
+            cd = CharacterData(rom, pid)
+            if cd.jidDefault == final_jid:
+                continue
+            cd.jidDefault = final_jid
+            jd = ClassData(rom, final_jid)
+            new_ranks = list(cd.baseWexp)
+            changed = False
+            for i in range(8):
+                if jd.baseWexp[i] > 0:
+                    if new_ranks[i] < S_RANK_WEXP:
+                        new_ranks[i] = S_RANK_WEXP
+                        changed = True
+                else:
+                    if new_ranks[i] != 0:
+                        new_ranks[i] = 0
+                        changed = True
+            if changed:
+                cd.baseWexp = new_ranks
+            cd.write(rom)
 
     return total
 
