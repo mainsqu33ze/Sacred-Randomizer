@@ -5,31 +5,63 @@ Randomizes **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs.
 ## Requirements
 
 - Python 3.8+
-- `pip install -r requirements.txt`
 - An FE8U (Sacred Stones) ROM — not included
+
+## Installation
+
+```bash
+git clone https://github.com/yourname/FE8-Custom-Randomizer.git
+cd FE8-Custom-Randomizer
+pip install .
+```
+
+This installs the `fe8-randomizer` CLI command and all dependencies (`pyyaml`, `tqdm`).
+
+For development (editable install + test dependencies):
+
+```bash
+pip install -e ".[dev]"
+```
 
 ## Quick start
 
-```
-python fe8_randomizer.py ROM.GBA -c config.yaml -o randomized.gba
-python fe8_randomizer.py ROM.GBA -s 42              # override config seed (--seed or -s)
-python fe8_randomizer.py ROM.GBA -v                  # show detailed progress messages
-python fe8_randomizer.py ROM.GBA --dump > ref.yaml   # print all defaults
+**New users** — the fastest way to get a randomized ROM:
+
+```bash
+fe8-randomizer Fire_Emblem_8.GBA -c config.yaml
 ```
 
-Without `-o`, output goes to `ROM_randomized.gba`. Default output is quiet (only the final ROM path); pass `-v` for step-by-step progress.
+This uses the included `config.yaml` which gives a fun, balanced experience out of the box. The randomized ROM is saved as `Fire_Emblem_8_randomized.gba` alongside the original.
 
-A `.txt` report is generated alongside the ROM (same name, `.txt` extension) with full details of class changes, weapon effects, event item changes, and per-unit growth rate totals with a summary range and average.
+**Common variations:**
+
+```bash
+# Use a specific seed (reproducible)
+fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -s 42
+
+# Custom output path
+fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -o my_randomized.gba
+
+# See what the randomizer is doing step-by-step
+fe8-randomizer Fire_Emblem_8.GBA -c config.yaml -v
+
+# Print the full default config to a file for editing
+fe8-randomizer Fire_Emblem_8.GBA --dump > my_config.yaml
+```
+
+A `.txt` report is generated alongside the output ROM with full details of class changes, weapon effects, event item changes, and per-unit growth rate totals.
+
+**Tip:** Edit `config.yaml` to enable/disable features. Every option has sensible defaults — start with the provided file and tweak what you like. See [Configuration](#configuration) below for all options.
 
 ## GUI
 
 A Tkinter GUI is also available for point-and-click configuration:
 
-```
+```bash
 python gui.py
 ```
 
-The GUI covers most common options across tabbed panels, but has a few **limitations** compared to using a `config.yaml` directly:
+The GUI covers all common options across tabbed panels (class randomization, growth rates, base stats, weapons, items, enemies, and boss buffs), but has a few **limitations** compared to using a `config.yaml` directly:
 
 - Cannot produce a `--dump` of the default config.
 - Seed cannot be overridden via CLI flag (set it inside the window).
