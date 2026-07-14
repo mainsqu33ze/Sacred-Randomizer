@@ -1,37 +1,68 @@
-# FE8 Randomizer
+# Sacred Randomizer
 
-Randomizes **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs.
+An extremely fast, efficient randomizer for **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs. Processes a 16 MB ROM in under a second with zero dependencies beyond Python itself.
 
 ## Requirements
 
 - Python 3.8+
-- `pip install -r requirements.txt`
 - An FE8U (Sacred Stones) ROM — not included
+
+## Installation
+
+```bash
+git clone https://github.com/yourname/FE8-Custom-Randomizer.git
+cd FE8-Custom-Randomizer
+pip install .
+```
+
+This installs the `sacred-randomizer` CLI command and all dependencies (`pyyaml`, `tqdm`).
+
+For development (editable install + test dependencies):
+
+```bash
+pip install -e ".[dev]"
+```
 
 ## Quick start
 
-```
-python fe8_randomizer.py ROM.GBA -c config.yaml -o randomized.gba
-python fe8_randomizer.py ROM.GBA -s 42              # override config seed (--seed or -s)
-python fe8_randomizer.py ROM.GBA -v                  # show detailed progress messages
-python fe8_randomizer.py ROM.GBA --dump > ref.yaml   # print all defaults
+**New users** — the fastest way to get a randomized ROM:
+
+```bash
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml
 ```
 
-Without `-o`, output goes to `ROM_randomized.gba`. Default output is quiet (only the final ROM path); pass `-v` for step-by-step progress.
+This uses the included `config.yaml` which gives a fun, balanced experience out of the box. The randomized ROM is saved as `Fire_Emblem_8_randomized.gba` alongside the original.
 
-A `.txt` report is generated alongside the ROM (same name, `.txt` extension) with full details of class changes, weapon effects, event item changes, and per-unit growth rate totals with a summary range and average.
+**Common variations:**
+
+```bash
+# Use a specific seed (reproducible)
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -s 42
+
+# Custom output path
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -o my_randomized.gba
+
+# See what the randomizer is doing step-by-step
+sacred-randomizer Fire_Emblem_8.GBA -c config.yaml -v
+
+# Print the full default config to a file for editing
+fe8-randomizer Fire_Emblem_8.GBA --dump > my_config.yaml
+```
+
+A `.txt` report is generated alongside the output ROM with full details of class changes, weapon effects, event item changes, and per-unit growth rate totals.
+
+**Tip:** Edit `config.yaml` to enable/disable features. Every option has sensible defaults — start with the provided file and tweak what you like. See [Configuration](#configuration) below for all options.
 
 ## GUI
 
 A Tkinter GUI is also available for point-and-click configuration:
 
-```
+```bash
 python gui.py
 ```
 
-The GUI covers most common options across tabbed panels, but has a few **limitations** compared to using a `config.yaml` directly:
+The GUI covers all common options across tabbed panels (class randomization, growth rates, base stats, weapons, items, enemies, and boss buffs), but has a few **limitations** compared to using a `config.yaml` directly:
 
-- Exposes fewer knobs — no `mean` field for growth/stat gaussians, no number/scaling mode for class growths, weapon stat mode is on/off only (no multiplier).
 - Cannot produce a `--dump` of the default config.
 - Seed cannot be overridden via CLI flag (set it inside the window).
 - Requires a display (Tkinter, not headless-friendly).
@@ -78,7 +109,7 @@ class_randomization:
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
   gender_lock: false     # Lock classes to same gender as character
   palette_mapping: true       # Auto-update palette class table for custom palettes
-  portrait_palettes: false    # Generate class palette from character's portrait colors
+  portrait_palettes: true     # Generate class palette from character's portrait colors
 ```
 
 `mode: shuffle` permutes promoted classes among promoted chars, unpromoted among unpromoted, trainees among trainees—no repeats. `mode: random` picks independently per character; multiple chars can share a class.
@@ -89,7 +120,7 @@ Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has 
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
-`portrait_palettes: false` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data.
+`portrait_palettes: true` (default) when set to `true`, generates a unique palette for each randomized character by mapping their original character portrait colors onto their new class's palette template. Uses color distance to match each template color to the closest color in the character's original portrait palette set, preserving the character's overall color identity. Requires `palette_mapping: true` to be effective. Generated palettes are stored as new entries in the ROM's palette table and don't affect any existing palette data. Set to `false` to disable (characters will use class-default palettes after palette_mapping).
 
 `gender_lock: false` (default) when set to `true`, restricts class randomization so each character only receives classes appropriate to their gender. Gender is inferred from the character's original class before randomization. Classes with male/female variants (e.g., Cavalier/Cavalier_F) are automatically swapped to the correct variant. Gender-exclusive classes (Fighter, Warrior, Berserker, Pirate, Monk, Priest, Thief, Journeyman, Pupil for males; Cleric, Troubadour, Valkyrie, Dancer, Recruit, Pegasus Knight, Falcon Knight for females) are only assigned to characters of that gender. When `manakete_count > 0`, Manakete assignments are limited to female-class characters. Also applies to bosses when `include_bosses: true` under `enemy_randomization`.
 
@@ -124,13 +155,13 @@ When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unuse
 
 ### growth_randomization
 
-Controls how fast units gain stats per level-up. You can set modes for **character** growths (affects playable units) and **class** growths (affects generic enemies):
+Controls how fast units gain stats per level-up. You can set modes for **character** growths (affects playable units) and **class** growths (affects all instances of each class — both player and enemy):
 
 ```yaml
 growth_randomization:
   character: random       # false | shuffle | random | pool
   class: random           # false | shuffle | random | random_buff | pool | <number>
-  class_buff_range: 0.5   # ±range for random_buff mode (e.g. 0.3 = ±30%)
+  class_buff_range: 0.5   # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
   min: 0                  # clamp floor
   max: 100                # clamp ceiling
   mean: null              # gaussian center (null = original value)
@@ -146,9 +177,9 @@ growth_randomization:
 | `random` | ✅ | ✅ | Gaussian with optional mean/stddev |
 | `pool` | ✅ | ✅ | Distribute `pool_total` across stats randomly |
 | `<number>` | — | ✅ | Scale all growths by factor (e.g. `1.3` = +30%) |
-| `random_buff` | — | ✅ | Each growth × `1.0 ± random(0, class_buff_range)` |
+| `random_buff` | — | ✅ | Each growth × `1.0 + random(0, class_buff_range)` |
 
-Class growths affect JIDs 1–128 (all classes including monsters), which primarily impacts generic enemy stats since playable characters use their own growth rates.
+Class growths affect all instances of each class (JIDs 1–128 including monsters). Since playable characters also belong to classes, class growth changes affect both player and enemy units using that class.
 
 ### base_stat_randomization
 
@@ -217,6 +248,8 @@ item_randomization:
 - **`mode: shuffle`**: permutes all weapons across unit definitions without changing the pool.
 - Manaketes always get `[Dragonstone, Vulnerary, Vulnerary, empty]`.
 
+**Note on `randomize_events` + `loot_randomization`:** These are independent features that both affect GiveItem events. `randomize_events` replaces weapon-type items in GiveItem events using weapon pools (weapons only). `loot_randomization` replaces *all* items in GiveItem events using the full item pool (weapons, stat boosters, keys, etc.) and also covers chest items. If both are enabled, GiveItem events are patched twice — first by `randomize_events` (weapons only), then by `loot_randomization` (full pool overwriting the previous result). For most use cases, enabling `loot_randomization` alone is sufficient; `randomize_events` is useful when you want weapon-specific randomization of events without touching chests or non-weapon items.
+
 **Weapon rank transfer:** When a character's class changes, weapon ranks are adjusted to match the new class. Ranks for weapon types the new class can't use are zeroed out. For supported types, the character keeps whichever is higher — their existing rank or the class's base. Additionally, if the character had their highest rank in a type they can no longer use, that rank is transferred to their weakest supported type, so Eirika's S-rank swords aren't wasted when she becomes a Mage.
 
 **Prf weapon type fix:** When Eirika or Ephraim is randomized to a new class, their personal weapons (Rapier `0x09` / Sieglinde `0x85` for Eirika; Reginleif `0x78` / Siegmund `0x92` for Ephraim) get their `weapon_type` byte updated to a type their new class can wield. The Ability 4 byte (offset `0x21`) is set to `0x0A` (Eirika lock) or `0x14` (Ephraim lock), making weapons check PID instead of class. Lord-class attribute lock bits from the class data are also copied into the character's PersonalInfo attributes (offset `0x28`) — Eirika gets bits 17+28 (`0x10020000`), Ephraim gets bit 29 (`0x20000000`) — so the equipped character always passes the item lock check regardless of their current class. This ensures lords can always use their signature weapons even after class randomization.
@@ -277,9 +310,11 @@ weapon_effects:
   eclipse: 1           # extremely rare
   devil: 8
   stone: 3
+  brave: 5             # independent per-item % chance — adds Brave (extra attack) via attribute bit
+  reaver: 3            # independent per-item % chance — adds Reaver (reverses weapon triangle) via attribute bit
 ```
 
-Weights control how often each effect is chosen. Story weapons (Rapier, Sieglinde, etc.) and monster-exclusive items are never affected.
+Weights control how often each effect is chosen from the effect pool (poison/nosferatu/eclipse/devil/stone). Brave and reaver are **independent** — each weapon rolls separately against its `%` chance, orthogonal to the effect pool. A weapon can gain brave, reaver, and an effect simultaneously. Story weapons (Rapier, Sieglinde, etc.) and monster-exclusive items are never affected.
 
 ### affinity_randomization
 
@@ -339,7 +374,7 @@ enemy_randomization:
   boss_buffs:                        # extra buffs when include_bosses: true
     growths:
       mode: false                    # false | <number> | random_buff | random
-      buff_range: 0.3                # ±range for random_buff mode
+      buff_range: 0.3                # range for random_buff mode
       mean: null
       stddev: 10
     base_stats:
@@ -375,6 +410,7 @@ class_randomization:
   include_soldier: false
   gender_lock: false
   palette_mapping: true
+  portrait_palettes: true
 
 recruitment_randomization:
   enabled: false
@@ -439,6 +475,8 @@ weapon_effects:
   eclipse: 1
   devil: 5
   stone: 1
+  brave: 0
+  reaver: 0
 
 affinity_randomization:
   enabled: false

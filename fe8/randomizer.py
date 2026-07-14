@@ -1,14 +1,13 @@
 import random
 import struct
-from functools import lru_cache
 from typing import Any, Dict, List, Set, Tuple, Optional
 
-from fe8rom import (
+from .fe8rom import (
     ROM, CharacterData, ClassData, ItemData, PID, JID,
     CHARACTER_COUNT, CLASS_COUNT, UNIT_DEF_SIZE, ITEM_DATA_SIZE,
     WEAPON_TYPE_NAMES, DRAGONSTONE_ITEM_ID, VULNERARY_ITEM_ID,
     MONSTER_BLOCKED_ITEM_IDS, BALLISTA_ITEM_IDS, STORY_EXCLUSIVE_ITEM_IDS,
-    PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID,
+    PROMOTION_ITEM_IDS, MASTER_SEAL_ITEM_ID, STAFF_ITEM_IDS,
     PROMO_FUNCTION_TABLE_ADDR, PROMO_ITEM_TABLES, PROMO_CLASS_TABLE_BASE,
     PROMO_CLASS_FUNCTION_TABLE, rom_offset, ROM_BASE, ITEM_TABLE_ADDR,
     build_weapon_pools, CHARACTER_TABLE_ADDR, PINFO_SIZE,
@@ -554,7 +553,7 @@ def _scan_loot_events(rom: ROM, giveitem_events: List[Tuple[int, int, str]],
     loot_excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     loot_excluded.update(PROMOTION_ITEM_IDS)
     loot_excluded.update({0x3D, 0x44, 0x8A})
-    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    loot_excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5, 0xA7, 0x8A, 0x77})
     if not include_ballista:
         loot_excluded.update(BALLISTA_ITEM_IDS)
     seen = set()
@@ -570,7 +569,7 @@ def _build_loot_pool(include_ballista: bool = False) -> List[int]:
     excluded = set(MONSTER_BLOCKED_ITEM_IDS) | set(STORY_EXCLUSIVE_ITEM_IDS)
     excluded.update({0x3D, 0x44, 0x8A})
     excluded.update(PROMOTION_ITEM_IDS)
-    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5})
+    excluded.update({0x7D, 0x7E, 0x7F, 0x80, 0xA2, 0xA3, 0xA4, 0xA5, 0xA7, 0xBA, 0x77})
     if not include_ballista:
         excluded.update(BALLISTA_ITEM_IDS)
     return [item_id for item_id in range(1, 0xC0) if item_id not in excluded]
@@ -697,7 +696,7 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     # original data, so the face shown matches the character who now occupies
     # that PID slot.  Copy from saved originals instead of sequential swaps
     # to avoid corrupting the permutation mapping.
-    from fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
+    from .fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
     portrait_snap = {}
     for pid in pids:
         slot = PID_TO_PORTRAIT_SLOT.get(pid)
@@ -742,6 +741,11 @@ def _sync_shared_pid_classes(rom: ROM) -> None:
                 continue
             if cd_src.jidDefault != cd_dst.jidDefault:
                 cd_dst.jidDefault = cd_src.jidDefault
+                jd = ClassData(rom, cd_src.jidDefault)
+                new_ranks = list(cd_dst.baseWexp)
+                for i in range(8):
+                    new_ranks[i] = S_RANK_WEXP if jd.baseWexp[i] > 0 else 0
+                cd_dst.baseWexp = new_ranks
                 cd_dst.write(rom)
                 _vprint(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
         except Exception:
@@ -947,7 +951,7 @@ def _randomize_class_growths(rom: ROM, jid: int, class_shuffle, rules: dict) -> 
     elif class_shuffle == 'random_buff':
         buff_range = rules.get('class_buff_range', 0.5)
         growths = [
-            _scale_stat(g, 1.0 + random.uniform(-buff_range, buff_range), min_g, max_g)
+            _scale_stat(g, 1.0 + random.uniform(0, buff_range), min_g, max_g)
             for g in growths
         ]
     elif class_shuffle == 'pool':
@@ -1337,6 +1341,8 @@ def randomize_weapon_effects(rom: ROM, config: dict) -> None:
         if stored_id != item_id or wep_type > 7:
             continue
         if item_id in MONSTER_BLOCKED_ITEM_IDS or item_id in STORY_EXCLUSIVE_ITEM_IDS:
+            continue
+        if item_id in STAFF_ITEM_IDS:
             continue
         if not include_ballista and item_id in BALLISTA_ITEM_IDS:
             continue
@@ -1955,7 +1961,7 @@ def randomize_enemies(rom: ROM, config: dict,
                     grow = [_scale_stat(g, float(boss_growth_mode), 0, 100) for g in grow]
                 elif boss_growth_mode == 'random_buff':
                     br = buff_growths.get('buff_range', 0.3)
-                    grow = [_scale_stat(g, 1.0 + random.uniform(-br, br), 0, 100) for g in grow]
+                    grow = [_scale_stat(g, 1.0 + random.uniform(0, br), 0, 100) for g in grow]
                 elif boss_growth_mode == 'random':
                     m = buff_growths.get('mean', None)
                     s = buff_growths.get('stddev', 10)
@@ -1972,7 +1978,7 @@ def randomize_enemies(rom: ROM, config: dict,
                     stats = [_scale_stat(s, float(boss_stat_mode), 0, cap) for s, cap in zip(stats, caps)]
                 elif boss_stat_mode == 'random_buff':
                     br = buff_stats.get('buff_range', 0.3)
-                    offsets = [random.uniform(-br, br) for _ in range(7)]
+                    offsets = [random.uniform(0, br) for _ in range(7)]
                     stats = [_scale_stat(s, 1.0 + off, 0, cap) for s, off, cap in zip(stats, offsets, caps)]
                 elif boss_stat_mode == 'random':
                     m = buff_stats.get('mean', None)
@@ -2000,6 +2006,7 @@ def randomize_enemies(rom: ROM, config: dict,
             cd.write(rom)
 
     # Phase B + C: UD array class overrides and items
+    boss_final_classes = {}
     if rand_classes or rand_items:
         include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
         if weapon_pools is None and rand_items:
@@ -2045,6 +2052,8 @@ def randomize_enemies(rom: ROM, config: dict,
 
                 if rand_classes and new_jid != orig_jid:
                     rom.data[arr_pos + 1] = new_jid
+                    if pid in BOSS_PIDS:
+                        boss_final_classes[pid] = new_jid
 
                 if rand_items:
                     if not randomize_monster_classes and new_jid in MONSTER_WEAPON_POOLS:
@@ -2095,6 +2104,31 @@ def randomize_enemies(rom: ROM, config: dict,
 
             if tqdm: pbar.update(1)
         if tqdm: pbar.close()
+
+    # Sync CharacterData for bosses whose UD array class diverged from Phase A.
+    # Phase A and Phase B+C pick classes independently; weapon ranks were set
+    # based on Phase A's pick but the game uses the UD array class in battle.
+    if boss_final_classes and boss_max_ranks:
+        for pid, final_jid in boss_final_classes.items():
+            cd = CharacterData(rom, pid)
+            if cd.jidDefault == final_jid:
+                continue
+            cd.jidDefault = final_jid
+            jd = ClassData(rom, final_jid)
+            new_ranks = list(cd.baseWexp)
+            changed = False
+            for i in range(8):
+                if jd.baseWexp[i] > 0:
+                    if new_ranks[i] < S_RANK_WEXP:
+                        new_ranks[i] = S_RANK_WEXP
+                        changed = True
+                else:
+                    if new_ranks[i] != 0:
+                        new_ranks[i] = 0
+                        changed = True
+            if changed:
+                cd.baseWexp = new_ranks
+            cd.write(rom)
 
     return total
 
@@ -2781,7 +2815,7 @@ def _write_report(orig_data: bytearray, rom: ROM, config: dict,
     for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
         orig_cd = CharacterData.__new__(CharacterData)
         orig_raw = orig_data[rom_offset(CHARACTER_TABLE_ADDR) + (pid - 1) * PINFO_SIZE:][:PINFO_SIZE]
-        orig_cd.jidDefault = orig_raw[4]
+        orig_cd.jidDefault = orig_raw[5]
 
         mod_cd = CharacterData(rom, pid)
         if orig_cd.jidDefault != mod_cd.jidDefault:

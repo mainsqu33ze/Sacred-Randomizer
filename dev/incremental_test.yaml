@@ -9,6 +9,12 @@ class_randomization:
   manakete_count: 1
   include_soldier: true
   palette_mapping: true
+  portrait_palettes: true
+
+recruitment_randomization:
+  enabled: true
+  mode: pre
+  preserve_tier: true
 
 growth_randomization:
   character: random

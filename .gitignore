@@ -1,48 +1,33 @@
+# Python
 *pycache*
-_test_*.gba
-*_randomized.gba
+*.pyc
+
+# ROM files (both cases for cross-platform safety)
 *.GBA
-scripts/_tmp_chapter_dump.py
-b_test_randomizer_rom.txt
-test_out.txt
-test_randomized.txt
-test_con.txt
-test_con2.txt
-test_con3.txt
-test_growth_buff.txt
-test_growth_random.txt
-test_growth_scale.txt
-test_growth_scale2.txt
-test_incr.txt
-test_verbose.txt
-test_boss.txt
-test_boss2.txt
-test_final.txt
-test_branch.txt
-scripts/_dump_cls.py
-test_config.yaml
-test_hybrid.txt
-b_test_promo_gain.txt
-test_dump_config.yaml
-_debug_ch9_sec2.py
-_debug_chest_ch8.py
-_debug_chest_format.py
-_debug_chest_giveitem.py
-_debug_chest_sections.py
-_debug_format_b.py
-_debug_ch3.py
-_debug_ch3_event.py
-_debug_class_data.py
-_debug_map_sprite.py
-_trace_20_12_handler.py
-_find_pid37_all.py
-_analyze_crash.py
-_analyze_pid37.py
-_check_class_data_integrity.py
-_check_event_structure.py
-_check_pid37_placement.py
+*.gba
+
+# Save files
 *.sav
-Fire_Emblem_8_randomized.txt
+
+# Dev diagnostic scripts and test configs (underscore-prefixed)
 _*.py
-test_*
+_*.yaml
+
+# Test outputs and configs (root-level only)
+/test_*
+!/tests/
+
+# Misc output
+Fire_Emblem_8_randomized.txt
 _portrait_config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

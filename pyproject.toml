@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "sacred-randomizer"
+version = "1.0.0"
+description = "An extremely fast randomizer for Fire Emblem: The Sacred Stones (FE8U)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "Kody Degolier" },
+]
+dependencies = [
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+sacred-randomizer = "fe8.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fe8*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

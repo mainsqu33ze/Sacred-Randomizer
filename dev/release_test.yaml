@@ -1,0 +1,113 @@
+# Release verification config — enables every feature with safe defaults.
+# Run: python fe8_randomizer.py Fire_Emblem_8.GBA -c dev/release_test.yaml -o test_output.gba -s 42 -v
+
+seed: 42
+
+class_randomization:
+  mode: shuffle
+  manakete_count: 1
+  omit_classes: []
+  include_soldier: false
+  palette_mapping: true
+  portrait_palettes: true
+  gender_lock: false
+
+recruitment_randomization:
+  enabled: true
+  mode: pre
+  preserve_tier: true
+
+growth_randomization:
+  character: random
+  class: random
+  class_buff_range: 0.5
+  min: 0
+  max: 255
+  mean: null
+  stddev: 10
+  pool_total: 315
+
+base_stat_randomization:
+  character: random
+  class: random
+  preserve_base: true
+  shuffle_con_mov: false
+  cross_tier_scramble: false
+  mean: null
+  stddev: 3
+  con:
+    enabled: true
+    min: 1
+    player_min: 1
+    stddev: 3
+
+item_randomization:
+  enabled: true
+  mode: random
+  randomize_events: false
+  include_ballista_items: false
+
+weapon_randomization:
+  enabled: true
+  might: true
+  hit: true
+  weight: true
+  crit: true
+  mean: null
+  stddev: 5
+  might_stddev: 3
+  hit_stddev: 20
+  weight_stddev: 3
+  crit_stddev: 5
+  min_might: 1
+  max_might: 20
+  min_hit: 30
+  max_hit: 120
+  min_weight: 1
+  max_weight: 20
+  min_crit: 0
+  max_crit: 30
+
+weapon_effects:
+  enabled: 10
+  poison: 2
+  nosferatu: 3
+  eclipse: 1
+  devil: 5
+  stone: 1
+  brave: 5
+  reaver: 3
+
+affinity_randomization:
+  enabled: true
+
+promotion_items:
+  enabled: true
+  master_seal_universal: true
+  replace_distribution: true
+
+loot_randomization:
+  enabled: true
+  mode: random
+
+enemy_randomization:
+  enabled: true
+  randomize_classes: true
+  randomize_items: true
+  include_monsters: false
+  randomize_monster_classes: false
+  include_bosses: true
+  weapon_upgrade_chance: 25
+  omit_classes: []
+  boss_buffs:
+    growths:
+      mode: random_buff
+      buff_range: 0.3
+      mean: null
+      stddev: 10
+    base_stats:
+      mode: 1.5
+      buff_range: 0.3
+      mean: null
+      stddev: 3
+    max_weapon_ranks: true
