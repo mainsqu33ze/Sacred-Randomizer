@@ -39,28 +39,34 @@ class FE8RandomizerGUI(tk.Tk):
         self.manakete_count = tk.IntVar(value=1)
         self.include_soldier = tk.BooleanVar(value=False)
         self.palette_mapping = tk.BooleanVar(value=True)
-        self.portrait_palettes = tk.BooleanVar(value=False)
-        self.gender_lock = tk.BooleanVar(value=False)
+        self.portrait_palettes = tk.BooleanVar(value=True)
+        self.gender_lock = tk.BooleanVar(value=True)
         self.affinity_randomization = tk.BooleanVar(value=False)
         self.class_omit = tk.StringVar(value="BARD")
 
         # Growth Settings
         self.growth_char = tk.StringVar(value="false")
+        self.growth_char_mult = tk.DoubleVar(value=1.3)
         self.growth_class = tk.StringVar(value="false")
+        self.growth_class_mult = tk.DoubleVar(value=1.3)
         self.growth_buff_range = tk.DoubleVar(value=0.5)
         self.growth_min = tk.IntVar(value=0)
         self.growth_max = tk.IntVar(value=100)
+        self.growth_mean = tk.StringVar(value="")
         self.growth_stddev = tk.IntVar(value=10)
         self.growth_pool_total = tk.IntVar(value=0)
 
         # Base Stat Settings
         self.base_char = tk.StringVar(value="false")
+        self.base_char_mult = tk.DoubleVar(value=1.3)
         self.base_class = tk.StringVar(value="false")
+        self.base_class_mult = tk.DoubleVar(value=1.3)
         self.base_preserve = tk.BooleanVar(value=True)
-        self.base_shuffle_con_mov = tk.BooleanVar(value=True)
+        self.base_shuffle_con_mov = tk.BooleanVar(value=False)
         self.base_cross_tier = tk.BooleanVar(value=False)
+        self.base_mean = tk.StringVar(value="")
         self.base_stddev = tk.IntVar(value=3)
-        self.con_enabled = tk.BooleanVar(value=True)
+        self.con_enabled = tk.BooleanVar(value=False)
         self.con_min = tk.IntVar(value=1)
         self.con_player_min = tk.IntVar(value=1)
         self.con_stddev = tk.IntVar(value=3)
@@ -68,10 +74,11 @@ class FE8RandomizerGUI(tk.Tk):
         # Item & Loot Settings
         self.item_enabled = tk.BooleanVar(value=True)
         self.item_mode = tk.StringVar(value="random")
+        self.item_randomize_events = tk.BooleanVar(value=True)
         self.promo_enabled = tk.BooleanVar(value=True)
         self.promo_universal = tk.BooleanVar(value=True)
         self.promo_replace_dist = tk.BooleanVar(value=True)
-        self.loot_enabled = tk.BooleanVar(value=False)
+        self.loot_enabled = tk.BooleanVar(value=True)
         self.loot_mode = tk.StringVar(value="random")
 
         # Weapon Settings
@@ -80,7 +87,12 @@ class FE8RandomizerGUI(tk.Tk):
         self.wpn_hit = tk.BooleanVar(value=True)
         self.wpn_weight = tk.BooleanVar(value=True)
         self.wpn_crit = tk.BooleanVar(value=True)
+        self.wpn_mean = tk.StringVar(value="")
         self.wpn_stddev = tk.IntVar(value=5)
+        self.wpn_might_stddev = tk.IntVar(value=3)
+        self.wpn_hit_stddev = tk.IntVar(value=20)
+        self.wpn_weight_stddev = tk.IntVar(value=3)
+        self.wpn_crit_stddev = tk.IntVar(value=5)
         self.wpn_min_might = tk.IntVar(value=1)
         self.wpn_max_might = tk.IntVar(value=20)
         self.wpn_min_hit = tk.IntVar(value=30)
@@ -92,14 +104,14 @@ class FE8RandomizerGUI(tk.Tk):
 
         # Weapon Effects Weights
         self.fx_enabled = tk.BooleanVar(value=False)
-        self.fx_enabled_pct = tk.IntVar(value=30)
+        self.fx_enabled_pct = tk.IntVar(value=15)
         self.fx_poison = tk.IntVar(value=2)
-        self.fx_nosferatu = tk.IntVar(value=3)
+        self.fx_nosferatu = tk.IntVar(value=1)
         self.fx_eclipse = tk.IntVar(value=1)
         self.fx_devil = tk.IntVar(value=5)
         self.fx_stone = tk.IntVar(value=1)
-        self.fx_brave = tk.IntVar(value=5)
-        self.fx_reaver = tk.IntVar(value=3)
+        self.fx_brave = tk.IntVar(value=1)
+        self.fx_reaver = tk.IntVar(value=1)
 
         # Recruitment Settings
         self.recruit_enabled = tk.BooleanVar(value=False)
@@ -113,7 +125,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.enemy_rand_monsters = tk.BooleanVar(value=False)
         self.enemy_inc_monsters = tk.BooleanVar(value=False)
         self.enemy_inc_bosses = tk.BooleanVar(value=False)
-        self.enemy_upgrade_chance = tk.IntVar(value=25)
+        self.enemy_upgrade_chance = tk.IntVar(value=50)
         self.enemy_omit = tk.StringVar()
         self.boss_growths_mode = tk.StringVar(value="false")
         self.boss_stats_mode = tk.StringVar(value="false")
@@ -302,40 +314,61 @@ class FE8RandomizerGUI(tk.Tk):
         g = ttk.LabelFrame(tab, text=" Player Character Growths ", padding=10)
         g.pack(fill=tk.X, pady=4)
 
+        g_modes = ["false", "shuffle", "random", "random_buff", "pool", "multiplier"]
+
         ttk.Label(g, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Combobox(g, textvariable=self.growth_char, values=["false", "shuffle", "random", "pool"], state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
+        ttk.Combobox(g, textvariable=self.growth_char, values=g_modes, state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(g, text="Stddev:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(g, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="Multiplier:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=0.1, to=3.0, increment=0.1, textvariable=self.growth_char_mult, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="(only used when mode = multiplier)", foreground="#555", font=("Segoe UI", 9)).grid(row=1, column=2, sticky=tk.W, padx=4)
 
-        ttk.Label(g, text="Clamp min / max:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(g, text="Mean (random):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(g, textvariable=self.growth_mean, width=8).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="(blank = use original value)", foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(g, text="Stddev:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(g, text="Clamp min / max:").grid(row=4, column=0, sticky=tk.W, pady=2)
         sf = ttk.Frame(g)
-        sf.grid(row=2, column=1, sticky=tk.W, padx=6)
+        sf.grid(row=4, column=1, sticky=tk.W, padx=6)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_min, width=5).pack(side=tk.LEFT)
         ttk.Label(sf, text="/").pack(side=tk.LEFT, padx=4)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_max, width=5).pack(side=tk.LEFT)
 
-        ttk.Label(g, text="Pool total (0 = auto):").grid(row=3, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(g, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="Pool total (0 = auto):").grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=5, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(g, text="Buff range:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(g, from_=0.0, to=1.0, increment=0.1, textvariable=self.growth_buff_range, width=6).grid(row=6, column=1, padx=6, sticky=tk.W)
+        ttk.Label(g, text="Scales stats by 1.0 to 1.0 + range (never decreases)", foreground="#555", font=("Segoe UI", 9)).grid(row=6, column=2, sticky=tk.W, padx=4)
 
         # Base Stats ----------------------------------------------------
-        b = ttk.LabelFrame(tab, text=" Base Stats ", padding=10)
+        b = ttk.LabelFrame(tab, text=" Player Base Stats ", padding=10)
         b.pack(fill=tk.X, pady=8)
 
-        ttk.Label(b, text="Player mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Combobox(b, textvariable=self.base_char, values=["false", "shuffle", "random"], state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
+        b_modes = ["false", "shuffle", "random", "multiplier"]
 
-        ttk.Label(b, text="Class mode:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Combobox(b, textvariable=self.base_class, values=["false", "shuffle", "random"], state="readonly").grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(b, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(b, textvariable=self.base_char, values=b_modes, state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(b, text="Stddev:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(b, from_=1, to=20, textvariable=self.base_stddev, width=6).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(b, text="Multiplier:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(b, from_=0.1, to=3.0, increment=0.1, textvariable=self.base_char_mult, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(b, text="(only used when mode = multiplier)", foreground="#555", font=("Segoe UI", 9)).grid(row=1, column=2, sticky=tk.W, padx=4)
 
-        ttk.Checkbutton(b, text="Cross-tier scramble (shuffle mode)", variable=self.base_cross_tier).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(b, text="Include Con/Mov in shuffle", variable=self.base_shuffle_con_mov).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Label(b, text="Mean (random):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(b, textvariable=self.base_mean, width=8).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(b, text="(blank = use original value)", foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(b, text="Stddev:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(b, from_=1, to=20, textvariable=self.base_stddev, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
+
+        ttk.Checkbutton(b, text="Cross-tier scramble (shuffle mode)", variable=self.base_cross_tier).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(b, text="Include Con/Mov in shuffle", variable=self.base_shuffle_con_mov).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
 
         con = ttk.LabelFrame(b, text=" Constitution Overrides ", padding=8)
-        con.grid(row=5, column=0, columnspan=2, sticky="ew", pady=6, padx=2)
+        con.grid(row=6, column=0, columnspan=2, sticky="ew", pady=6, padx=2)
 
         ttk.Checkbutton(con, text="Enable independent Con control", variable=self.con_enabled).grid(row=0, column=0, columnspan=2, sticky=tk.W)
         ttk.Label(con, text="Min (class):").grid(row=1, column=0, sticky=tk.W, pady=2)
@@ -354,6 +387,7 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Auto-adjust inventories for new classes", variable=self.item_enabled).pack(anchor=tk.W, pady=2)
         ttk.Label(card, text="Mode:").pack(anchor=tk.W, padx=15)
         ttk.Combobox(card, textvariable=self.item_mode, values=["random", "shuffle"], state="readonly").pack(anchor=tk.W, padx=25)
+        ttk.Checkbutton(card, text="Randomize GiveItem event items", variable=self.item_randomize_events).pack(anchor=tk.W, padx=15, pady=2)
         ttk.Label(card, text="Prf weapons (Rapier, Sieglinde, Reginleif, Siegmund) auto-adopt\ntheir lord's new class weapon type. Character lock is set via\nAbility 4 byte + class attribute bits for equip compatibility.", foreground="#555", font=("Segoe UI", 9)).pack(anchor=tk.W, padx=15, pady=2)
 
         card2 = ttk.LabelFrame(tab, text=" Promotion Items ", padding=10)
@@ -384,8 +418,20 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Weight (WT)", variable=self.wpn_weight).grid(row=2, column=0, sticky=tk.W, padx=15)
         ttk.Checkbutton(card, text="Crit (CRT)", variable=self.wpn_crit).grid(row=2, column=1, sticky=tk.W)
 
-        ttk.Label(card, text="Global stddev:").grid(row=3, column=0, sticky=tk.W, padx=15, pady=4)
-        ttk.Spinbox(card, from_=1, to=30, textvariable=self.wpn_stddev, width=5).grid(row=3, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Mean (blank = use original):").grid(row=3, column=0, sticky=tk.W, padx=15, pady=4)
+        ttk.Entry(card, textvariable=self.wpn_mean, width=8).grid(row=3, column=1, sticky=tk.W, padx=6)
+
+        ttk.Label(card, text="Global stddev:").grid(row=4, column=0, sticky=tk.W, padx=15, pady=4)
+        ttk.Spinbox(card, from_=1, to=30, textvariable=self.wpn_stddev, width=5).grid(row=4, column=1, sticky=tk.W, padx=6)
+
+        ttk.Label(card, text="Might stddev:").grid(row=5, column=0, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(card, from_=1, to=30, textvariable=self.wpn_might_stddev, width=5).grid(row=5, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Hit stddev:").grid(row=6, column=0, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(card, from_=1, to=50, textvariable=self.wpn_hit_stddev, width=5).grid(row=6, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Weight stddev:").grid(row=7, column=0, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(card, from_=1, to=30, textvariable=self.wpn_weight_stddev, width=5).grid(row=7, column=1, sticky=tk.W, padx=6)
+        ttk.Label(card, text="Crit stddev:").grid(row=8, column=0, sticky=tk.W, padx=15, pady=2)
+        ttk.Spinbox(card, from_=1, to=30, textvariable=self.wpn_crit_stddev, width=5).grid(row=8, column=1, sticky=tk.W, padx=6)
 
         def _range_row(parent, label, row, min_var, max_var, min_to, max_to):
             ttk.Label(parent, text=label).grid(row=row, column=0, sticky=tk.W, padx=15, pady=2)
@@ -395,10 +441,10 @@ class FE8RandomizerGUI(tk.Tk):
             ttk.Label(f, text="/").pack(side=tk.LEFT, padx=2)
             ttk.Spinbox(f, from_=0, to=max_to, textvariable=max_var, width=4).pack(side=tk.LEFT)
 
-        _range_row(card, "Min/Max Might:", 4, self.wpn_min_might, self.wpn_max_might, 30, 30)
-        _range_row(card, "Min/Max Hit:", 5, self.wpn_min_hit, self.wpn_max_hit, 150, 150)
-        _range_row(card, "Min/Max Weight:", 6, self.wpn_min_weight, self.wpn_max_weight, 30, 30)
-        _range_row(card, "Min/Max Crit:", 7, self.wpn_min_crit, self.wpn_max_crit, 50, 50)
+        _range_row(card, "Min/Max Might:", 9, self.wpn_min_might, self.wpn_max_might, 30, 30)
+        _range_row(card, "Min/Max Hit:", 10, self.wpn_min_hit, self.wpn_max_hit, 150, 150)
+        _range_row(card, "Min/Max Weight:", 11, self.wpn_min_weight, self.wpn_max_weight, 30, 30)
+        _range_row(card, "Min/Max Crit:", 12, self.wpn_min_crit, self.wpn_max_crit, 50, 50)
 
         # Effects -------------------------------------------------------
         fx = ttk.LabelFrame(tab, text=" Random Effects ", padding=10)
@@ -453,27 +499,60 @@ class FE8RandomizerGUI(tk.Tk):
         self.enemy_omit_status.config(text=f"{len(omitted)} selected" if omitted else "(none)")
 
         # Class Growths -------------------------------------------------
-        cg = ttk.LabelFrame(tab, text=" Enemy Class Growth Rates ", padding=10)
+        cg = ttk.LabelFrame(tab, text=" Class Growth Rates ", padding=10)
         cg.pack(fill=tk.X, pady=4)
+        ttk.Label(cg, text="Affects all instances of each class (player and enemy).", foreground="#555", font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=4)
 
-        ttk.Label(cg, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Combobox(cg, textvariable=self.growth_class, values=["false", "shuffle", "random", "random_buff", "pool"], state="readonly").grid(row=0, column=1, padx=6, sticky=tk.W)
+        cg_modes = ["false", "shuffle", "random", "random_buff", "pool", "multiplier"]
 
-        ttk.Label(cg, text="Stddev:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(cg, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=1, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="Mode:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(cg, textvariable=self.growth_class, values=cg_modes, state="readonly").grid(row=1, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(cg, text="Clamp min / max:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(cg, text="Multiplier:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=0.1, to=3.0, increment=0.1, textvariable=self.growth_class_mult, width=6).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="(only used when mode = multiplier)", foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(cg, text="Mean (random):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(cg, textvariable=self.growth_mean, width=8).grid(row=3, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="(blank = use original value)", foreground="#555", font=("Segoe UI", 9)).grid(row=3, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(cg, text="Stddev:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=1, to=50, textvariable=self.growth_stddev, width=6).grid(row=4, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(cg, text="Clamp min / max:").grid(row=5, column=0, sticky=tk.W, pady=2)
         sf = ttk.Frame(cg)
-        sf.grid(row=2, column=1, sticky=tk.W, padx=6)
+        sf.grid(row=5, column=1, sticky=tk.W, padx=6)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_min, width=5).pack(side=tk.LEFT)
         ttk.Label(sf, text="/").pack(side=tk.LEFT, padx=4)
         ttk.Spinbox(sf, from_=0, to=255, textvariable=self.growth_max, width=5).pack(side=tk.LEFT)
 
-        ttk.Label(cg, text="Buff range (+/-):").grid(row=3, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(cg, from_=0.0, to=1.0, increment=0.1, textvariable=self.growth_buff_range, width=6).grid(row=3, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="Buff range:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=0.0, to=1.0, increment=0.1, textvariable=self.growth_buff_range, width=6).grid(row=6, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="Scales stats by 1.0 to 1.0 + range (never decreases)", foreground="#555", font=("Segoe UI", 9)).grid(row=6, column=2, sticky=tk.W, padx=4)
 
-        ttk.Label(cg, text="Pool total (0 = auto):").grid(row=4, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(cg, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=4, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cg, text="Pool total (0 = auto):").grid(row=7, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cg, from_=0, to=500, textvariable=self.growth_pool_total, width=6).grid(row=7, column=1, padx=6, sticky=tk.W)
+
+        # Class Base Stats -----------------------------------------------
+        cb = ttk.LabelFrame(tab, text=" Class Base Stats ", padding=10)
+        cb.pack(fill=tk.X, pady=4)
+        ttk.Label(cb, text="Affects all instances of each class (player and enemy).", foreground="#555", font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=4)
+
+        b_modes = ["false", "shuffle", "random", "multiplier"]
+
+        ttk.Label(cb, text="Mode:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(cb, textvariable=self.base_class, values=b_modes, state="readonly").grid(row=1, column=1, padx=6, sticky=tk.W)
+
+        ttk.Label(cb, text="Multiplier:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cb, from_=0.1, to=3.0, increment=0.1, textvariable=self.base_class_mult, width=6).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cb, text="(only used when mode = multiplier)", foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(cb, text="Mean (random):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(cb, textvariable=self.base_mean, width=8).grid(row=3, column=1, padx=6, sticky=tk.W)
+        ttk.Label(cb, text="(blank = use original value)", foreground="#555", font=("Segoe UI", 9)).grid(row=3, column=2, sticky=tk.W, padx=4)
+
+        ttk.Label(cb, text="Stddev:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(cb, from_=1, to=20, textvariable=self.base_stddev, width=6).grid(row=4, column=1, padx=6, sticky=tk.W)
 
         # Boss Buffs ----------------------------------------------------
         bb = ttk.LabelFrame(tab, text=" Boss Buffs (when included) ", padding=10)
@@ -485,8 +564,9 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(bb, text="Base stats mode:").grid(row=1, column=0, sticky=tk.W, pady=2)
         ttk.Combobox(bb, textvariable=self.boss_stats_mode, values=["false", "1.3", "1.5", "random_buff", "random"], state="readonly").grid(row=1, column=1, padx=6, sticky=tk.W)
 
-        ttk.Label(bb, text="Buff range (+/-):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(bb, text="Buff range:").grid(row=2, column=0, sticky=tk.W, pady=2)
         ttk.Spinbox(bb, from_=0.0, to=1.0, increment=0.1, textvariable=self.boss_buff_range, width=5).grid(row=2, column=1, padx=6, sticky=tk.W)
+        ttk.Label(bb, text="Scales stats by 1.0 to 1.0 + range (never decreases)", foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=2, sticky=tk.W, padx=4)
 
         ttk.Checkbutton(bb, text="Max weapon ranks to S", variable=self.boss_max_ranks).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
 
@@ -500,6 +580,29 @@ class FE8RandomizerGUI(tk.Tk):
 
         def _omit_list(s):
             return [x.strip().upper() for x in s.split(",") if x.strip()]
+
+        def _opt_float(s):
+            try:
+                v = float(s)
+                return v
+            except (ValueError, TypeError):
+                return None
+
+        def _growth_val(mode_var, mult_var):
+            v = mode_var.get()
+            if v == "multiplier":
+                return mult_var.get()
+            return _mode(v, ["shuffle", "random", "random_buff", "pool"])
+
+        def _base_val(mode_var, mult_var):
+            v = mode_var.get()
+            if v == "multiplier":
+                return mult_var.get()
+            return _mode(v, ["shuffle", "random"])
+
+        growth_mean = _opt_float(self.growth_mean.get())
+        base_mean = _opt_float(self.base_mean.get())
+        wpn_mean = _opt_float(self.wpn_mean.get())
 
         bs_val = self.boss_stats_mode.get()
         if bs_val == "false":
@@ -522,22 +625,22 @@ class FE8RandomizerGUI(tk.Tk):
                 "portrait_palettes": self.portrait_palettes.get(),
             },
             "growth_randomization": {
-                "character": _mode(self.growth_char.get(), ["shuffle", "random", "pool"]),
-                "class": _mode(self.growth_class.get(), ["shuffle", "random", "random_buff", "pool"]),
+                "character": _growth_val(self.growth_char, self.growth_char_mult),
+                "class": _growth_val(self.growth_class, self.growth_class_mult),
                 "class_buff_range": self.growth_buff_range.get(),
                 "min": self.growth_min.get(),
                 "max": self.growth_max.get(),
-                "mean": None,
+                "mean": growth_mean,
                 "stddev": self.growth_stddev.get(),
                 "pool_total": self.growth_pool_total.get() if self.growth_pool_total.get() > 0 else None,
             },
             "base_stat_randomization": {
-                "character": _mode(self.base_char.get(), ["shuffle", "random"]),
-                "class": _mode(self.base_class.get(), ["shuffle", "random"]),
+                "character": _base_val(self.base_char, self.base_char_mult),
+                "class": _base_val(self.base_class, self.base_class_mult),
                 "preserve_base": self.base_preserve.get(),
                 "shuffle_con_mov": self.base_shuffle_con_mov.get(),
                 "cross_tier_scramble": self.base_cross_tier.get(),
-                "mean": None,
+                "mean": base_mean,
                 "stddev": self.base_stddev.get(),
                 "con": {
                     "enabled": self.con_enabled.get(),
@@ -549,6 +652,7 @@ class FE8RandomizerGUI(tk.Tk):
             "item_randomization": {
                 "enabled": self.item_enabled.get(),
                 "mode": self.item_mode.get(),
+                "randomize_events": self.item_randomize_events.get(),
             },
             "weapon_randomization": {
                 "enabled": self.wpn_enabled.get(),
@@ -556,8 +660,12 @@ class FE8RandomizerGUI(tk.Tk):
                 "hit": self.wpn_hit.get(),
                 "weight": self.wpn_weight.get(),
                 "crit": self.wpn_crit.get(),
-                "mean": None,
+                "mean": wpn_mean,
                 "stddev": self.wpn_stddev.get(),
+                "might_stddev": self.wpn_might_stddev.get(),
+                "hit_stddev": self.wpn_hit_stddev.get(),
+                "weight_stddev": self.wpn_weight_stddev.get(),
+                "crit_stddev": self.wpn_crit_stddev.get(),
                 "min_might": self.wpn_min_might.get(),
                 "max_might": self.wpn_max_might.get(),
                 "min_hit": self.wpn_min_hit.get(),
@@ -672,20 +780,44 @@ class FE8RandomizerGUI(tk.Tk):
             self.portrait_palettes.set(c.get("portrait_palettes", False))
 
             g = d.get("growth_randomization", {})
-            self.growth_char.set(_str(g.get("character")))
-            self.growth_class.set(_str(g.get("class")))
+            g_char = g.get("character")
+            if isinstance(g_char, (int, float)) and not isinstance(g_char, bool):
+                self.growth_char.set("multiplier")
+                self.growth_char_mult.set(float(g_char))
+            else:
+                self.growth_char.set(_str(g_char))
+            g_class = g.get("class")
+            if isinstance(g_class, (int, float)) and not isinstance(g_class, bool):
+                self.growth_class.set("multiplier")
+                self.growth_class_mult.set(float(g_class))
+            else:
+                self.growth_class.set(_str(g_class))
             self.growth_buff_range.set(g.get("class_buff_range", 0.5))
             self.growth_min.set(g.get("min", 0))
             self.growth_max.set(g.get("max", 100))
+            g_mean = g.get("mean")
+            self.growth_mean.set("" if g_mean is None else str(g_mean))
             self.growth_stddev.set(g.get("stddev", 10))
             self.growth_pool_total.set(g.get("pool_total", 0) or 0)
 
             b = d.get("base_stat_randomization", {})
-            self.base_char.set(_str(b.get("character")))
-            self.base_class.set(_str(b.get("class")))
+            b_char = b.get("character")
+            if isinstance(b_char, (int, float)) and not isinstance(b_char, bool):
+                self.base_char.set("multiplier")
+                self.base_char_mult.set(float(b_char))
+            else:
+                self.base_char.set(_str(b_char))
+            b_class = b.get("class")
+            if isinstance(b_class, (int, float)) and not isinstance(b_class, bool):
+                self.base_class.set("multiplier")
+                self.base_class_mult.set(float(b_class))
+            else:
+                self.base_class.set(_str(b_class))
             self.base_preserve.set(b.get("preserve_base", True))
             self.base_shuffle_con_mov.set(b.get("shuffle_con_mov", True))
             self.base_cross_tier.set(b.get("cross_tier_scramble", False))
+            b_mean = b.get("mean")
+            self.base_mean.set("" if b_mean is None else str(b_mean))
             self.base_stddev.set(b.get("stddev", 3))
             con = b.get("con", {})
             self.con_enabled.set(con.get("enabled", True))
@@ -696,6 +828,7 @@ class FE8RandomizerGUI(tk.Tk):
             it = d.get("item_randomization", {})
             self.item_enabled.set(_bool(it.get("enabled")))
             self.item_mode.set(it.get("mode", "random"))
+            self.item_randomize_events.set(_bool(it.get("randomize_events")))
 
             w = d.get("weapon_randomization", {})
             self.wpn_enabled.set(_bool(w.get("enabled")))
@@ -703,7 +836,13 @@ class FE8RandomizerGUI(tk.Tk):
             self.wpn_hit.set(_bool(w.get("hit")))
             self.wpn_weight.set(_bool(w.get("weight")))
             self.wpn_crit.set(_bool(w.get("crit")))
+            w_mean = w.get("mean")
+            self.wpn_mean.set("" if w_mean is None else str(w_mean))
             self.wpn_stddev.set(w.get("stddev", 5))
+            self.wpn_might_stddev.set(w.get("might_stddev", 3))
+            self.wpn_hit_stddev.set(w.get("hit_stddev", 20))
+            self.wpn_weight_stddev.set(w.get("weight_stddev", 3))
+            self.wpn_crit_stddev.set(w.get("crit_stddev", 5))
             self.wpn_min_might.set(w.get("min_might", 1))
             self.wpn_max_might.set(w.get("max_might", 20))
             self.wpn_min_hit.set(w.get("min_hit", 30))

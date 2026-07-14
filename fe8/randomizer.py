@@ -951,7 +951,7 @@ def _randomize_class_growths(rom: ROM, jid: int, class_shuffle, rules: dict) -> 
     elif class_shuffle == 'random_buff':
         buff_range = rules.get('class_buff_range', 0.5)
         growths = [
-            _scale_stat(g, 1.0 + random.uniform(-buff_range, buff_range), min_g, max_g)
+            _scale_stat(g, 1.0 + random.uniform(0, buff_range), min_g, max_g)
             for g in growths
         ]
     elif class_shuffle == 'pool':
@@ -1961,7 +1961,7 @@ def randomize_enemies(rom: ROM, config: dict,
                     grow = [_scale_stat(g, float(boss_growth_mode), 0, 100) for g in grow]
                 elif boss_growth_mode == 'random_buff':
                     br = buff_growths.get('buff_range', 0.3)
-                    grow = [_scale_stat(g, 1.0 + random.uniform(-br, br), 0, 100) for g in grow]
+                    grow = [_scale_stat(g, 1.0 + random.uniform(0, br), 0, 100) for g in grow]
                 elif boss_growth_mode == 'random':
                     m = buff_growths.get('mean', None)
                     s = buff_growths.get('stddev', 10)
@@ -1978,7 +1978,7 @@ def randomize_enemies(rom: ROM, config: dict,
                     stats = [_scale_stat(s, float(boss_stat_mode), 0, cap) for s, cap in zip(stats, caps)]
                 elif boss_stat_mode == 'random_buff':
                     br = buff_stats.get('buff_range', 0.3)
-                    offsets = [random.uniform(-br, br) for _ in range(7)]
+                    offsets = [random.uniform(0, br) for _ in range(7)]
                     stats = [_scale_stat(s, 1.0 + off, 0, cap) for s, off, cap in zip(stats, offsets, caps)]
                 elif boss_stat_mode == 'random':
                     m = buff_stats.get('mean', None)
