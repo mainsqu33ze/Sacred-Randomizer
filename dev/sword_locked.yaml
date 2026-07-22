@@ -17,7 +17,7 @@ class_randomization:
   gender_lock: true
   include_soldier: false
   manakete_count: 0
-  mode: shuffle
+  mode: random
   omit_classes:
   - EPHRAIM_LORD
   - EPHRAIM_MASTER_LORD
