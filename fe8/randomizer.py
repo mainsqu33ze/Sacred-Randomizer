@@ -794,6 +794,8 @@ def randomize_class(rom: ROM, config: dict) -> Set[int]:
             pool = set()
             for j in jids:
                 sj = _swap_gendered_class(j, is_female)
+                if sj in omit_jids:
+                    continue
                 if is_female and sj in MALE_EXCLUSIVE_JIDS:
                     continue
                 if not is_female and sj in FEMALE_EXCLUSIVE_JIDS:
