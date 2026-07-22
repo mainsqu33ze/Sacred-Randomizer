@@ -1,0 +1,165 @@
+affinity_randomization:
+  enabled: false
+base_stat_randomization:
+  character: false
+  class: false
+  con:
+    enabled: false
+    min: 1
+    player_min: 1
+    stddev: 3
+  cross_tier_scramble: false
+  mean: null
+  preserve_base: true
+  shuffle_con_mov: false
+  stddev: 3
+class_randomization:
+  gender_lock: true
+  include_soldier: false
+  manakete_count: 0
+  mode: shuffle
+  omit_classes:
+  - MAGE
+  - MAGE_F
+  - SAGE
+  - SAGE_F
+  - MAGE_KNIGHT
+  - MAGE_KNIGHT_F
+  - BISHOP
+  - BISHOP_F
+  - SHAMAN
+  - SHAMAN_F
+  - DRUID
+  - DRUID_F
+  - SUMMONER
+  - SUMMONER_F
+  - PUPIL_T2
+  - PUPIL
+  - MONK
+  - PRIEST
+  - BARD
+  - CLERIC
+  - TROUBADOUR
+  - VALKYRIE
+  palette_mapping: true
+  portrait_palettes: true
+enemy_randomization:
+  boss_buffs:
+    base_stats:
+      buff_range: 0.3
+      mean: null
+      mode: false
+      stddev: 3
+    growths:
+      buff_range: 0.3
+      mean: null
+      mode: false
+      stddev: 10
+    max_weapon_ranks: true
+  enabled: true
+  include_bosses: true
+  include_monsters: false
+  omit_classes:
+  - CAVALIER
+  - CAVALIER_F
+  - PALADIN
+  - PALADIN_F
+  - ARMOR_KNIGHT
+  - ARMOR_KNIGHT_F
+  - GENERAL
+  - GENERAL_F
+  - THIEF
+  - MERCENARY
+  - MERCENARY_F
+  - HERO
+  - HERO_F
+  - MYRMIDON
+  - MYRMIDON_F
+  - SWORDMASTER
+  - SWORDMASTER_F
+  - ASSASSIN
+  - ASSASSIN_F
+  - ARCHER
+  - ARCHER_F
+  - SNIPER
+  - SNIPER_F
+  - RANGER
+  - RANGER_F
+  - WYVERN_RIDER
+  - WYVERN_RIDER_F
+  - WYVERN_LORD
+  - WYVERN_LORD_F
+  - WYVERN_KNIGHT
+  - WYVERN_KNIGHT_F
+  - ROGUE
+  - GREAT_KNIGHT
+  - GREAT_KNIGHT_F
+  - RECRUIT_T1
+  - JOURNEYMAN_T2
+  - RECRUIT_T2
+  - FIGHTER
+  - WARRIOR
+  - BRIGAND
+  - PIRATE
+  - BERSERKER
+  - PEGASUS_KNIGHT
+  - FALCON_KNIGHT
+  - SOLDIER
+  randomize_classes: true
+  randomize_items: true
+  randomize_monster_classes: false
+  weapon_upgrade_chance: 75
+growth_randomization:
+  character: false
+  class: false
+  class_buff_range: 0.5
+  max: 100
+  mean: null
+  min: 0
+  pool_total: null
+  stddev: 10
+item_randomization:
+  enabled: true
+  mode: random
+  randomize_events: true
+loot_randomization:
+  enabled: true
+  mode: random
+promotion_items:
+  enabled: true
+  master_seal_universal: true
+  replace_distribution: true
+recruitment_randomization:
+  enabled: false
+  mode: pre
+  preserve_tier: true
+seed: 0
+weapon_effects:
+  brave: 1
+  devil: 5
+  eclipse: 1
+  enabled: false
+  nosferatu: 1
+  poison: 2
+  reaver: 1
+  stone: 1
+weapon_randomization:
+  crit: true
+  crit_stddev: 5
+  enabled: false
+  hit: true
+  hit_stddev: 20
+  max_crit: 30
+  max_hit: 120
+  max_might: 20
+  max_weight: 20
+  mean: null
+  might: true
+  might_stddev: 3
+  min_crit: 0
+  min_hit: 30
+  min_might: 1
+  min_weight: 1
+  stddev: 5
+  weight: true
+  weight_stddev: 3
