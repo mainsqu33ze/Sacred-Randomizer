@@ -2,6 +2,8 @@
 
 An extremely fast, efficient randomizer for **Fire Emblem: The Sacred Stones** (FE8U) GBA ROMs. Processes a 16 MB ROM in under a second with zero dependencies beyond Python itself.
 
+<img width="800" height="800" alt="sacred_randomizer_logo_smaller" src="https://github.com/user-attachments/assets/ba446b7c-e7de-47b8-aa4d-7cfcb086dfdc" />
+
 ## Requirements
 
 - Python 3.8+
