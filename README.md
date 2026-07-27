@@ -97,7 +97,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 When running the randomizer with an untouched `config.yaml`, the default profile provides a **fun, balanced gameplay experience** with the following baseline behavior:
 
 * **Playable Characters:** Classes are shuffled (unpromoted to unpromoted, promoted to promoted) without duplication. Custom colors/palettes are intelligently mapped to their new classes. A single unit is guaranteed to become a Manakete.
-* **Map Enemies:** Generic enemy classes and inventories are randomized. Their classes respect original map placement boundaries (e.g., flying units replace flying units) so they don't get trapped on mountains or oceans. Bosses are left vanilla.
+* **Map Enemies:** Generic enemy classes and inventories are randomized. Movement-aware replacement pools ensure enemies keep access to their starting terrain — non-flying units can also become flyers, but flyers are restricted to flyer replacements so they don't get trapped. Bosses are left vanilla.
 * **Items & Mechanics:** Inventories auto-adjust so randomized units always spawn with weapons they can actually wield. All promotion items are universally mapped to function as **Master Seals** for ease of progression.
 * **Stats & Growths:** Character growths, base stats, weapon values, and event loot locations remain identical to vanilla rules. Chest scanning via Location Events is disabled (entries were false positives).
 
@@ -390,7 +390,7 @@ enemy_randomization:
     max_weapon_ranks: true           # S-rank for all usable weapon types
 ```
 
-Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain.
+Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain. Non-flyer units (foot, mountain, water) can also be replaced by flyers, expanding their candidate pool. Flyers remain restricted to flyer-only replacements.
 
 **Exclusions:**
 - Manakete, Bard, Dancer, Fleet, Phantom, Demon King, and JIDs 0x67–0x7B never appear in enemy pools.
