@@ -329,14 +329,16 @@ def _swap_gendered_class(jid: int, is_female: bool) -> int:
     return jid
 
 
-def _split_class_pool(rom: ROM) -> Tuple[Set[int], Set[int]]:
+def _split_class_pool(rom: ROM, include_trainees: bool = True) -> Tuple[Set[int], Set[int]]:
     promoted = set()
     unpromoted = set()
     for jid in STANDARD_JIDS:
         jd = ClassData(rom, jid)
         if jd.attributes & CA_PROMOTED:
             promoted.add(jid)
-        elif jid not in TRAINEE_JIDS:
+        elif include_trainees and jid in TRAINEE_JIDS:
+            continue
+        else:
             unpromoted.add(jid)
     return promoted, unpromoted
 
@@ -766,6 +768,7 @@ def randomize_class(rom: ROM, config: dict) -> Set[int]:
         manakete_count = 0
     omit_jids = _parse_omit_classes(config)
     include_soldier = rules.get('include_soldier', False)
+    include_trainees = rules.get('include_trainees', True)
 
     modified_pids = set()
 
@@ -776,12 +779,17 @@ def randomize_class(rom: ROM, config: dict) -> Set[int]:
         cd.write(rom)
         modified_pids.add(pid)
 
-    promoted_jids, unpromoted_jids = _split_class_pool(rom)
+    promoted_jids, unpromoted_jids = _split_class_pool(rom, include_trainees)
     promoted_chars, unpromoted_chars = _split_characters_by_tier(rom)
 
-    available_trainee = sorted(TRAINEE_JIDS - omit_jids)
-    trainee_chars = sorted([p for p in unpromoted_chars if p in TRAINEE_PIDS])
-    non_trainee_unpromoted = sorted([p for p in unpromoted_chars if p not in TRAINEE_PIDS])
+    if include_trainees:
+        available_trainee = sorted(TRAINEE_JIDS - omit_jids)
+        trainee_chars = sorted([p for p in unpromoted_chars if p in TRAINEE_PIDS])
+        non_trainee_unpromoted = sorted([p for p in unpromoted_chars if p not in TRAINEE_PIDS])
+    else:
+        available_trainee = []
+        trainee_chars = []
+        non_trainee_unpromoted = sorted(unpromoted_chars)
 
     promoted_jids -= omit_jids
     unpromoted_jids -= omit_jids
@@ -1077,11 +1085,15 @@ def randomize_base_stats(rom: ROM, config: dict) -> None:
 
     if isinstance(class_enabled, str) and class_enabled == 'shuffle':
         cross_tier = rules.get('cross_tier_scramble', False)
+        include_trainees = config.get('class_randomization', {}).get('include_trainees', True)
         if cross_tier:
             groups = [list(STANDARD_JIDS)]
         else:
-            prom, unpr = _split_class_pool(rom)
-            groups = [sorted(prom), sorted(unpr), sorted(TRAINEE_JIDS)]
+            prom, unpr = _split_class_pool(rom, include_trainees)
+            if include_trainees:
+                groups = [sorted(prom), sorted(unpr), sorted(TRAINEE_JIDS)]
+            else:
+                groups = [sorted(prom), sorted(unpr)]
         stat_count = 8 if shuffle_con_mov and con_enabled else (7 if shuffle_con_mov else 6)
         for group in groups:
             if len(group) < 2:
@@ -2547,9 +2559,12 @@ def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
     trainee_pids = {7, 18, 24}
     weapon_req_pids = {2, 13}
 
-    promoted_jids, unpromoted_jids = _split_class_pool(rom)
+    class_rules = config.get('class_randomization', {})
+    include_trainees = class_rules.get('include_trainees', True)
+    include_soldier = class_rules.get('include_soldier', False)
+
+    promoted_jids, unpromoted_jids = _split_class_pool(rom, include_trainees)
     omit_jids = _parse_omit_classes(config)
-    include_soldier = config.get('class_randomization', {}).get('include_soldier', False)
 
     promoted_jids -= omit_jids
     unpromoted_jids -= omit_jids
@@ -2570,7 +2585,14 @@ def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
     for pid in unprompted_pids:
         cd = CharacterData(rom, pid)
         jid = cd.jidDefault
-        if jid in TRAINEE_JIDS or jid in promoted_jids:
+        if include_trainees and jid in TRAINEE_JIDS:
+            pool = [j for j in unpromoted_list if not (pid in weapon_req_pids and not _has_weapon(j))]
+            new_jid = random.choice(pool) if pool else random.choice(unpromoted_list)
+            cd.jidDefault = new_jid
+            _adjust_weapon_ranks(cd, new_jid, rom)
+            cd.write(rom)
+            fixed.add(pid)
+        elif jid in promoted_jids:
             pool = [j for j in unpromoted_list if not (pid in weapon_req_pids and not _has_weapon(j))]
             new_jid = random.choice(pool) if pool else random.choice(unpromoted_list)
             cd.jidDefault = new_jid
@@ -2578,17 +2600,18 @@ def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
             cd.write(rom)
             fixed.add(pid)
 
-    for pid in trainee_pids:
-        cd = CharacterData(rom, pid)
-        jid = cd.jidDefault
-        if jid not in TRAINEE_JIDS:
-            if not trainee_list:
-                continue
-            new_jid = random.choice(trainee_list)
-            cd.jidDefault = new_jid
-            _adjust_weapon_ranks(cd, new_jid, rom)
-            cd.write(rom)
-            fixed.add(pid)
+    if include_trainees:
+        for pid in trainee_pids:
+            cd = CharacterData(rom, pid)
+            jid = cd.jidDefault
+            if jid not in TRAINEE_JIDS:
+                if not trainee_list:
+                    continue
+                new_jid = random.choice(trainee_list)
+                cd.jidDefault = new_jid
+                _adjust_weapon_ranks(cd, new_jid, rom)
+                cd.write(rom)
+                fixed.add(pid)
 
     for pid in weapon_req_pids:
         cd = CharacterData(rom, pid)

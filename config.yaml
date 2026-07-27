@@ -8,7 +8,7 @@
 # Override the seed on the command line:
 #   sacred-randomizer ROM.GBA -c config.yaml --seed 12345
 
-seed: 42  # 0 = random (uses system time); also overridable via --seed
+seed: 1  # 0 = random (uses system time); also overridable via --seed
 
 # ---------------------------------------------------------------------------
 # CLASSES
@@ -17,9 +17,10 @@ seed: 42  # 0 = random (uses system time); also overridable via --seed
 # Characters keep their original stats unless stat randomization is also enabled.
 class_randomization:
   mode: random              # 'shuffle' (permute, no repeats) or 'random' (sample with replacement, repeats allowed)
-  manakete_count: 1          # max characters that become Manakete (0 = none)
+  manakete_count: 0          # max characters that become Manakete (0 = none)
   omit_classes: []           # List of JID enum names to exclude, e.g. [NECROMANCER] (case-insensitive)
   include_soldier: false     # Soldier has no promotion path; excluded from player pools by default
+  include_trainees: true      # true = Ross/Amelia/Ewan restricted to trainee classes; false = any class allowed
   palette_mapping: true       # Auto-update palette class table to apply custom palettes to new classes
   portrait_palettes: true     # Generate unique palettes from a character's original colors onto new class templates
   gender_lock: false          # Lock randomized classes to same gender as character (male/female variants swapped automatically)
@@ -38,12 +39,12 @@ class_randomization:
 #   'random_buff' — random fractional buff per stat (class only, uses class_buff_range)
 growth_randomization:
   character: random            # Per-character growth rates
-  class: random                # Per-class growth rates (mostly impacts generic enemies)
+  class: 1.25                # Per-class growth rates (mostly impacts generic enemies)
   class_buff_range: 0.5        # range for 'random_buff' mode (e.g. 0.3 = stats scaled by 1.0–1.3)
   min: 0                       # Minimum clamp for all growth modes
   max: 255                     # Maximum clamp for all growth modes
   mean: null                   # Mean for 'random' normal distribution (null = use original value)
-  stddev: 10                   # Standard deviation for 'random' normal distribution
+  stddev: 30                   # Standard deviation for 'random' normal distribution
   pool_total: 315              # Total growth pool for 'pool' mode (null = preserve original total)
 
 # ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ base_stat_randomization:
   mean: null                 # Mean for 'random' mode (null = use original stat value)
   stddev: 3                  # Standard deviation for 'random' mode
   con:                       # Separate Con randomization; false = preserve Con in ALL modes
-    enabled: true             # false = never modify Con (scale, shuffle, random all skip it)
+    enabled: false             # false = never modify Con (scale, shuffle, random all skip it)
     min: 1                   # Minimum Con for class bases
     player_min: 1            # Minimum Con for player unit bases
     stddev: 3                # Standard deviation for Con (separate from global stddev)
@@ -73,7 +74,7 @@ base_stat_randomization:
 item_randomization:
   enabled: true              # true = give characters weapons usable by their new class
   mode: random               # 'random' = pick random usable weapons from pools; 'shuffle' = permute all items
-  randomize_events: false    # true = also randomize items given via GiveItem event commands (slow)
+  randomize_events: true    # true = also randomize items given via GiveItem event commands (slow)
 
 # ---------------------------------------------------------------------------
 # WEAPON STATS (Might / Hit / Weight / Crit)
@@ -107,12 +108,12 @@ weapon_randomization:
 weapon_effects:
   enabled: 10              # false = off; number = percent chance per weapon (e.g. 10 = 10%)
   poison: 2                # Relative weight for each effect (higher = more likely)
-  nosferatu: 3
+  nosferatu: 1
   eclipse: 1
   devil: 5
   stone: 1
-  brave: 0                 # Independent per-item % chance to gain Brave (extra attack) — uses attribute bit, not effect pool
-  reaver: 0                # Independent per-item % chance to gain Reaver (reverses weapon triangle) — uses attribute bit
+  brave: 1                 # Independent per-item % chance to gain Brave (extra attack) — uses attribute bit, not effect pool
+  reaver: 1                # Independent per-item % chance to gain Reaver (reverses weapon triangle) — uses attribute bit
 
 # ---------------------------------------------------------------------------
 # AFFINITIES
@@ -146,16 +147,16 @@ enemy_randomization:
   randomize_monster_classes: false       # true = randomize monster enemies into other classes
   include_monsters: false                # true = allow enemies to randomize into monster classes
   include_bosses: true                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
-  weapon_upgrade_chance: 25              # percent chance (0-100) a unit's weapon tier is improved
+  weapon_upgrade_chance: 50              # percent chance (0-100) a unit's weapon tier is improved
   omit_classes: []                       # List of JID enum names to exclude, e.g. [SHAMAN, MERCENARY]
   boss_buffs:                            # Applied only when include_bosses: true
     growths:
-      mode: random_buff                        # false | <number> | random_buff | random
+      mode: 1.25                        # false | <number> | random_buff | random
       buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
       mean: null                         # mean for random mode
       stddev: 10                         # stddev for random mode
     base_stats:
-      mode: 1.5                        # false | <number> | random_buff | random
+      mode: 1.25                        # false | <number> | random_buff | random
       buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
       mean: null                         # mean for random mode
       stddev: 3                          # stddev for random mode

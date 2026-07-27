@@ -46,6 +46,8 @@ Examples:
         print("  omit_classes: []")
         print("  # Soldier has no promotion; excluded from player pools by default")
         print("  include_soldier: false")
+        print("  # true = Ross/Amelia/Ewan restricted to trainee classes; false = any class allowed")
+        print("  include_trainees: true")
         print("  # Auto-update palette class table so characters keep custom palettes")
         print("  palette_mapping: true")
         print("")

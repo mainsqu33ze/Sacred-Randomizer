@@ -109,6 +109,7 @@ class_randomization:
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
+  include_trainees: true  # true = Ross/Amelia/Ewan restricted to trainee classes; false = any class allowed
   gender_lock: false     # Lock classes to same gender as character
   palette_mapping: true       # Auto-update palette class table for custom palettes
   portrait_palettes: true     # Generate class palette from character's portrait colors
@@ -119,6 +120,8 @@ class_randomization:
 `manakete_count` overwrites the mode logic for that many characters, giving them `JID.MANAKETE_MYRRH` with Dragonstone+Vulneraries.
 
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
+
+`include_trainees: true` (default) restricts Ross (PID 7), Amelia (PID 18), and Ewan (PID 24) to trainee classes (Journeyman, Pupil, Recruit) and prevents other characters from receiving trainee classes. Set to `false` to remove this restriction — any character can become a trainee and trainee PIDs can receive any class. This is useful for specialized runs (e.g., "only sword classes") where you want the full class pool available for every character. When disabled, the trainee promotion table is automatically zeroed out since those PIDs no longer follow the trainee promotion path.
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
@@ -151,7 +154,7 @@ When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unuse
 
 **Unconditional guarantees (always active regardless of settings):**
 - **PID 1 (Eirika), PID 15 (Ephraim):** These are the main lords — game over if either falls in battle. They are **not** restricted to lord classes and can be assigned any class after the swap.
-- **Trainee enforcement:** PIDs 7, 18, 24 (Ross, Amelia, Ewan) always have trainee classes regardless of what data swaps into them.
+- **Trainee enforcement:** PIDs 7, 18, 24 (Ross, Amelia, Ewan) always have trainee classes when `include_trainees: true` (default). When `include_trainees: false`, they can receive any class.
 - **Unpromoted enforcement:** 18 story-critical PID slots (1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31) are always kept as unpromoted classes to preserve early-game balance.
 - **Cutscene weapon guarantee:** PID 2 (Seth) is always given an equippable combat weapon for chapters 0 and 4 to prevent cutscene crashes. PID 13 (Artur) also gets the guarantee for chapter 4.
 
