@@ -402,7 +402,7 @@ def _pick_weapon_for_type(rom: ROM, weapon_pools: dict, char_ranks: List[int],
 # ---------------------------------------------------------------------------
 
 def _ud_array_at_lenient(data: bytearray, offset: int, rom_size: int) -> int:
-    if offset + ROM_BASE >= 0x088D0000:
+    if offset + ROM_BASE >= 0x08A00000:
         return 0
     pos = offset
     entries = 0
@@ -457,7 +457,7 @@ def _scan_chapter_ud_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, i
         gmap_ptr = _U32.unpack_from(data, asset_off + gmap_event_id * 4)[0]
         gmap_off = gmap_ptr - ROM_BASE
 
-        for off in range(0, 0x400, 4):
+        for off in range(0, 0x1000, 4):
             val = _U32.unpack_from(data, event_data_off + off)[0]
             if val not in seen:
                 ud_offset = val - ROM_BASE
@@ -466,7 +466,7 @@ def _scan_chapter_ud_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, i
                     seen.add(val)
                     results.append((ud_offset, count))
 
-        for off in range(0, 0x200, 4):
+        for off in range(0, 0x800, 4):
             val = _U32.unpack_from(data, gmap_off + off)[0]
             if val not in seen:
                 ud_offset = val - ROM_BASE
@@ -475,6 +475,52 @@ def _scan_chapter_ud_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, i
                     seen.add(val)
                     results.append((ud_offset, count))
 
+    return results
+
+
+# ---------------------------------------------------------------------------
+# SVAL s2 scanner — catches reinforcement UD arrays passed via memory slot 2
+# ---------------------------------------------------------------------------
+
+# SVAL s2 binary pattern:
+#   [0x40, 0x05] = SVAL header (cmd 0x05, size=4 halfwords = 8 bytes)
+#   [0x02, 0x00] = slot 2 (little-endian u16)
+# FE8 reinforcement events use LOAD_S2 commands that read the UD array
+# pointer from s2 instead of embedding it in the LOAD command parameter.
+# The actual pointer is set by a preceding `SVAL s2 <pointer>` in the
+# event script.  _scan_ud_arrays only matches LOAD commands with a valid
+# ROM pointer, so these reinforcement UD arrays are silently skipped.
+_SVAL_S2_HDR = bytes([0x40, 0x05, 0x02, 0x00])
+
+
+def _scan_sval_s2_arrays(data: bytearray, rom_size: int) -> List[Tuple[int, int]]:
+    """Find UD arrays whose pointers live in SVAL s2 commands.
+
+    Reinforcement events in vanilla FE8 store the unit-definition pointer in
+    memory slot 2 (s2) and use a negative offset in the LOAD command to tell
+    the engine to read from s2.  The ``_scan_ud_arrays`` byte-scanner only
+    matches LOAD commands with a *valid ROM pointer* parameter, so these
+    reinforcement UD arrays are silently skipped.  This function closes the
+    gap by locating the ``SVAL s2 <ptr>`` commands that precede the LOAD.
+    """
+    results: List[Tuple[int, int]] = []
+    lo = rom_offset(0x088B0000)
+    hi = min(rom_offset(0x08A00000), rom_size)
+    pos = lo
+    while True:
+        pos = data.find(_SVAL_S2_HDR, pos, hi)
+        if pos == -1 or pos + 8 > rom_size:
+            break
+        ptr = _U32.unpack_from(data, pos + 4)[0]
+        if not (0x08000000 <= ptr < ROM_BASE + rom_size
+                and ptr % 4 == 0 and ptr >= 0x08800000):
+            pos += 1
+            continue
+        ud_offset = ptr - ROM_BASE
+        count = _ud_array_at_lenient(data, ud_offset, rom_size)
+        if count > 0:
+            results.append((ud_offset, count))
+        pos += 1
     return results
 
 
@@ -1844,7 +1890,8 @@ def _move_group_key(move_table_ptr: int) -> str:
 def randomize_enemies(rom: ROM, config: dict,
                       ud_arrays: List[Tuple[int, int]],
                       ch_ud_arrays: List[Tuple[int, int]],
-                      weapon_pools: Optional[dict] = None) -> int:
+                      weapon_pools: Optional[dict] = None,
+                      sval_s2_arrays: Optional[List[Tuple[int, int]]] = None) -> int:
     rules = config.get('enemy_randomization', {})
     if not rules.get('enabled', False):
         return 0
@@ -1910,8 +1957,12 @@ def randomize_enemies(rom: ROM, config: dict,
         key = _move_group_key(jd.moveTable[0])
         unpromoted_groups.setdefault(key, []).append(jid)
 
-    # Combine UD arrays
-    all_ud_offsets = list({off for off, _ in ud_arrays} | {off for off, _ in ch_ud_arrays})
+    # Combine UD arrays (including reinforcement arrays found via SVAL s2)
+    all_ud_offsets = list(
+        {off for off, _ in ud_arrays}
+        | {off for off, _ in ch_ud_arrays}
+        | {off for off, _ in (sval_s2_arrays or [])}
+    )
 
     total = 0
 
@@ -2774,13 +2825,13 @@ def _build_ud_to_chapters(rom: ROM) -> Dict[int, list]:
         chapter_name = CHAPTER_NAMES.get(ch, f'Ch{ch}')
         seen = set()
 
-        for off in range(0, 0x400, 4):
+        for off in range(0, 0x1000, 4):
             val = _U32.unpack_from(data, event_data_off + off)[0]
             if is_ud_addr(val) and val not in seen:
                 seen.add(val)
                 result.setdefault(val - ROM_BASE, []).append(chapter_name)
 
-        for off in range(0, 0x400, 4):
+        for off in range(0, 0x1000, 4):
             val = _U32.unpack_from(data, event_data_off + off)[0]
             if 0x089E0000 <= val < 0x08A00000 and val in script_to_uds:
                 for ud_addr in script_to_uds[val]:
@@ -2788,7 +2839,7 @@ def _build_ud_to_chapters(rom: ROM) -> Dict[int, list]:
                         seen.add(ud_addr)
                         result.setdefault(ud_addr - ROM_BASE, []).append(chapter_name)
 
-        for off in range(0, 0x200, 4):
+        for off in range(0, 0x800, 4):
             val = _U32.unpack_from(data, gmap_off + off)[0]
             if is_ud_addr(val) and val not in seen:
                 seen.add(val)
@@ -3002,8 +3053,10 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     _vprint("Scanning ROM structures...")
     ud_arrays = _scan_ud_arrays(data, rom_size)
     ch_ud_arrays = _scan_chapter_ud_arrays(data, rom_size)
+    sval_s2_arrays = _scan_sval_s2_arrays(data, rom_size)
     giveitem_events = _scan_giveitem_events(data, rom_size)
-    _vprint(f"  Found {len(ud_arrays)} UD array(s), {len(ch_ud_arrays)} chapter array(s), {len(giveitem_events)} GiveItem event(s)")
+    _vprint(f"  Found {len(ud_arrays)} UD array(s), {len(ch_ud_arrays)} chapter array(s), "
+            f"{len(sval_s2_arrays)} SVAL-s2 array(s), {len(giveitem_events)} GiveItem event(s)")
 
     include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
     weapon_pools = build_weapon_pools(rom, include_ballista)
@@ -3045,7 +3098,8 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     _fix_prf_weapon_types(rom, modified_pids)
 
-    enemy_patched = randomize_enemies(rom, config, ud_arrays, ch_ud_arrays, weapon_pools)
+    enemy_patched = randomize_enemies(rom, config, ud_arrays, ch_ud_arrays, weapon_pools,
+                                       sval_s2_arrays=sval_s2_arrays)
     if enemy_patched:
         _vprint(f"Randomized {enemy_patched} generic enemy unit(s)")
 

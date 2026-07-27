@@ -66,8 +66,9 @@ Without `-o`, output defaults to `{rom}_randomized.gba`. `--dump` ignores `--see
 
 ## UD array scanner gotchas
 - `_scan_ud_arrays` searches for `{0x40..0x43, 0x54, 0x8C, 0xA8, 0xAA, 0xC4}` + 0x2C pattern, reads pointer at pos+4 in ROM data. Covers LOAD-event-referenced UD arrays. Uses `_ud_array_at_lenient` for validation.
-- `_scan_chapter_ud_arrays` reads UD pointers from chapter event data (direct pointers at 4-byte intervals up to 0x400 bytes) and GMap data (up to 0x200 bytes). Covers arrays FE Builder shows in its Unit Placer view.
-- `_ud_array_at_lenient` (used by both `_scan_ud_arrays` and `_scan_chapter_ud_arrays`): allows pid > 114 (NPC/allied units embedded alongside generic enemies in chapter data arrays). Only rejects pid=0 mid-array or class_idx > 127.
+- `_scan_chapter_ud_arrays` reads UD pointers from chapter event data (direct pointers at 4-byte intervals up to 0x1000 bytes) and GMap data (up to 0x800 bytes). Covers arrays FE Builder shows in its Unit Placer view.
+- `_scan_sval_s2_arrays` finds UD arrays passed via memory slot 2 (`SVAL s2 <ptr>`). FE8 reinforcement events use LOAD_S2 commands that read the UD array pointer from s2 instead of embedding it directly. The LOAD command's pointer field contains a negative value (e.g. `0xFFFFFFFF`) that fails `_scan_ud_arrays` address validation, silently skipping reinforcement UD arrays. The SVAL s2 scanner searches for the pattern `[0x40, 0x05, 0x02, 0x00]` in the event data range (0x088B0000–0x08A00000) and validates the following 4-byte pointer as a UD array.
+- `_ud_array_at_lenient` (used by all three scanners): allows pid > 114 (NPC/allied units embedded alongside generic enemies in chapter data arrays). Only rejects pid=0 mid-array or class_idx > 127. Address cutoff is 0x08A00000 (event data range).
 - **False positive at 0x0880210C**: 6 entries with u16 coordinate pairs. Entries 1/4 have pid=0, now correctly rejected. Writing here corrupted coordinates, causing combat animation glitches.
 - **0x08802508** (1 entry, pid=3 valid) still passes — can't filter without breaking real single-entry arrays.
 - No `entries < 2` check — many real UD arrays (0x088Bxxxx) have exactly 1 entry.
@@ -108,3 +109,9 @@ Phases (in `randomize_promotion_items`):
 - `FINAL_BOSS_PID = 0xBE` — PID 190, always excluded regardless of `include_bosses`.
 - `MONSTER_WEAPON_POOLS`: limited item pools for specific monster JIDs (MANAKETE_2 → 0x90, REVENANT/ENTOUMBED/BAEL/ELDER_BAEL → [0x8B, 0xAD, 0xAE, 0xAF], MAUTHEDOOG/GWYLLGI → [0xB1, 0xB2], MOGALL/ARCH_MOGALL → [0xB3, 0xB4, 0xAC], GORGON → [0xAC, 0xAB, 0xB5]).
 - `EXTRA_MONSTER_JIDS` = {0x7C, 0x7D} — JIDs beyond the enum range.
+
+## FE8 event code references
+- Venno's FE8 Event Code Documentation: https://feuniverse.us/t/fe8-event-code-documentation/280
+- StanHash's Event Master Doc: https://github.com/StanHash/DOC/blob/master/EventDoc/EventCodes.md
+- FE8 EA Eventing Guide: https://feuniverse.us/t/fe8-ea-eventing-guide/7080
+- Event Hacking for Dummies: https://forums.serenesforest.net/topic/25360-event-hacking-for-dummies/
