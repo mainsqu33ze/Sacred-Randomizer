@@ -1985,7 +1985,12 @@ def randomize_enemies(rom: ROM, config: dict,
             orig_class = ClassData(rom, orig_jid)
             is_promoted = bool(orig_class.attributes & CA_PROMOTED)
             key = _move_group_key(orig_class.moveTable[0])
-            candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
+            groups = promoted_groups if is_promoted else unpromoted_groups
+            candidates = list(groups.get(key, []))
+            if key != 'flyer' and 'flyer' in groups:
+                candidates.extend(groups['flyer'])
+            if not candidates:
+                candidates = [orig_jid]
 
             if enemy_gender_lock and pid in BOSS_PIDS:
                 is_female = _is_character_female(rom, pid)
@@ -2110,7 +2115,12 @@ def randomize_enemies(rom: ROM, config: dict,
                         orig_class = ClassData(rom, orig_jid)
                         is_promoted = bool(orig_class.attributes & CA_PROMOTED)
                         key = _move_group_key(orig_class.moveTable[0])
-                        candidates = (promoted_groups if is_promoted else unpromoted_groups).get(key, [orig_jid])
+                        groups = promoted_groups if is_promoted else unpromoted_groups
+                        candidates = list(groups.get(key, []))
+                        if key != 'flyer' and 'flyer' in groups:
+                            candidates.extend(groups['flyer'])
+                        if not candidates:
+                            candidates = [orig_jid]
                         new_jid = random.choice(candidates)
 
                 new_class = ClassData(rom, new_jid)
