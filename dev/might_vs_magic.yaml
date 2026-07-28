@@ -16,6 +16,7 @@ base_stat_randomization:
 class_randomization:
   gender_lock: true
   include_soldier: false
+  include_trainees: false
   manakete_count: 0
   mode: random
   omit_classes:

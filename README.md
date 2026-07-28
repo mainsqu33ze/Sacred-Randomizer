@@ -97,7 +97,7 @@ All features are controlled by `config.yaml`. Every option has sensible defaults
 When running the randomizer with an untouched `config.yaml`, the default profile provides a **fun, balanced gameplay experience** with the following baseline behavior:
 
 * **Playable Characters:** Classes are shuffled (unpromoted to unpromoted, promoted to promoted) without duplication. Custom colors/palettes are intelligently mapped to their new classes. A single unit is guaranteed to become a Manakete.
-* **Map Enemies:** Generic enemy classes and inventories are randomized. Their classes respect original map placement boundaries (e.g., flying units replace flying units) so they don't get trapped on mountains or oceans. Bosses are left vanilla.
+* **Map Enemies:** Generic enemy classes and inventories are randomized. Movement-aware replacement pools ensure enemies keep access to their starting terrain — non-flying units can also become flyers, but flyers are restricted to flyer replacements so they don't get trapped. Bosses are left vanilla.
 * **Items & Mechanics:** Inventories auto-adjust so randomized units always spawn with weapons they can actually wield. All promotion items are universally mapped to function as **Master Seals** for ease of progression.
 * **Stats & Growths:** Character growths, base stats, weapon values, and event loot locations remain identical to vanilla rules. Chest scanning via Location Events is disabled (entries were false positives).
 
@@ -109,6 +109,7 @@ class_randomization:
   manakete_count: 1      # max characters that become Manakete (0 = none)
   omit_classes: []       # JID names to exclude, e.g. [NECROMANCER]
   include_soldier: false # Soldier has no promotion; excluded from player pools by default
+  include_trainees: true  # true = Ross/Amelia/Ewan restricted to trainee classes; false = any class allowed
   gender_lock: false     # Lock classes to same gender as character
   palette_mapping: true       # Auto-update palette class table for custom palettes
   portrait_palettes: true     # Generate class palette from character's portrait colors
@@ -119,6 +120,8 @@ class_randomization:
 `manakete_count` overwrites the mode logic for that many characters, giving them `JID.MANAKETE_MYRRH` with Dragonstone+Vulneraries.
 
 Soldier (`JID.SOLDIER`) is excluded from player pools by default because it has no promotion path (`jidPromotion=0`). Set `include_soldier: true` to allow it. Soldier classes can still appear on generic enemies regardless.
+
+`include_trainees: true` (default) restricts Ross (PID 7), Amelia (PID 18), and Ewan (PID 24) to trainee classes (Journeyman, Pupil, Recruit) and prevents other characters from receiving trainee classes. Set to `false` to remove this restriction — any character can become a trainee and trainee PIDs can receive any class. This is useful for specialized runs (e.g., "only sword classes") where you want the full class pool available for every character. When disabled, the trainee promotion table is automatically zeroed out since those PIDs no longer follow the trainee promotion path.
 
 `palette_mapping: true` (default) automatically updates the Palette Class Table so randomized characters keep their custom color schemes. When Eirika becomes a Cavalier, she'll still have her pink palette instead of the generic Cavalier blue. Characters without a custom palette entry (Eirika, Ephraim) will borrow one from another character whose palette table matches their new class — e.g., Eirika randomized to Pegasus Knight borrows Vanessa's palette. Set to `false` to disable (characters will use generic class palettes).
 
@@ -151,7 +154,7 @@ When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unuse
 
 **Unconditional guarantees (always active regardless of settings):**
 - **PID 1 (Eirika), PID 15 (Ephraim):** These are the main lords — game over if either falls in battle. They are **not** restricted to lord classes and can be assigned any class after the swap.
-- **Trainee enforcement:** PIDs 7, 18, 24 (Ross, Amelia, Ewan) always have trainee classes regardless of what data swaps into them.
+- **Trainee enforcement:** PIDs 7, 18, 24 (Ross, Amelia, Ewan) always have trainee classes when `include_trainees: true` (default). When `include_trainees: false`, they can receive any class.
 - **Unpromoted enforcement:** 18 story-critical PID slots (1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31) are always kept as unpromoted classes to preserve early-game balance.
 - **Cutscene weapon guarantee:** PID 2 (Seth) is always given an equippable combat weapon for chapters 0 and 4 to prevent cutscene crashes. PID 13 (Artur) also gets the guarantee for chapter 4.
 
@@ -387,7 +390,7 @@ enemy_randomization:
     max_weapon_ranks: true           # S-rank for all usable weapon types
 ```
 
-Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain.
+Classes are grouped by **movement category** (flyer / water / mountain / foot) so enemies placed on mountains or water tiles can still navigate their terrain. Non-flyer units (foot, mountain, water) can also be replaced by flyers, expanding their candidate pool. Flyers remain restricted to flyer-only replacements.
 
 **Exclusions:**
 - Manakete, Bard, Dancer, Fleet, Phantom, Demon King, and JIDs 0x67–0x7B never appear in enemy pools.

@@ -38,6 +38,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.class_mode = tk.StringVar(value="shuffle")
         self.manakete_count = tk.IntVar(value=1)
         self.include_soldier = tk.BooleanVar(value=False)
+        self.include_trainees = tk.BooleanVar(value=True)
         self.palette_mapping = tk.BooleanVar(value=True)
         self.portrait_palettes = tk.BooleanVar(value=True)
         self.gender_lock = tk.BooleanVar(value=True)
@@ -216,10 +217,11 @@ class FE8RandomizerGUI(tk.Tk):
         self._update_omit_status()
 
         ttk.Checkbutton(card, text="Allow Soldier (no promotion path)", variable=self.include_soldier).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Gender-lock classes to character's gender", variable=self.gender_lock).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Auto-map custom palettes to new classes", variable=self.palette_mapping).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Generate portrait-based palettes for new classes", variable=self.portrait_palettes).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Restrict Ross/Amelia/Ewan to trainee classes", variable=self.include_trainees).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Gender-lock classes to character's gender", variable=self.gender_lock).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Auto-map custom palettes to new classes", variable=self.palette_mapping).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Generate portrait-based palettes for new classes", variable=self.portrait_palettes).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(card, text="Randomize support affinities", variable=self.affinity_randomization).grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=2)
 
     def _update_omit_status(self):
         omitted = [x.strip().upper() for x in self.class_omit.get().split(",") if x.strip()]
@@ -305,7 +307,7 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Preserve class tiers during swap (promoted ↔ promoted only)", variable=self.recruit_preserve_tier).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=0, pady=4)
         ttk.Label(card, text="When swapping recruitment data, a promoted character (e.g. Seth) only\nswaps with other promoted slots. Safer for game balance — prevents\nprepromotes in early-game unpromoted slots. Disable for full chaos.", foreground="#555", font=("Segoe UI", 9)).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
 
-        ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan always stay as trainees. Seth gets a combat weapon\nguarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
+        ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan restriction to trainees is toggleable in the Classes tab.\nSeth gets a combat weapon guarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
 
     def _build_stats_tab(self):
         tab = self._scrollable_tab("Stats & Growths")
@@ -620,6 +622,7 @@ class FE8RandomizerGUI(tk.Tk):
                 "manakete_count": self.manakete_count.get(),
                 "omit_classes": _omit_list(self.class_omit.get()),
                 "include_soldier": self.include_soldier.get(),
+                "include_trainees": self.include_trainees.get(),
                 "gender_lock": self.gender_lock.get(),
                 "palette_mapping": self.palette_mapping.get(),
                 "portrait_palettes": self.portrait_palettes.get(),
@@ -775,6 +778,7 @@ class FE8RandomizerGUI(tk.Tk):
             self.manakete_count.set(c.get("manakete_count", 1))
             self.class_omit.set(", ".join(c.get("omit_classes", [])))
             self.include_soldier.set(_bool(c.get("include_soldier")))
+            self.include_trainees.set(c.get("include_trainees", True))
             self.gender_lock.set(_bool(c.get("gender_lock")))
             self.palette_mapping.set(c.get("palette_mapping", True))
             self.portrait_palettes.set(c.get("portrait_palettes", False))
