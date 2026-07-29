@@ -2619,7 +2619,7 @@ def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
 def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
     unprompted_pids = {1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31}
     trainee_pids = {7, 18, 24}
-    weapon_req_pids = {2, 13}
+    weapon_req_pids = {2, 19}
 
     class_rules = config.get('class_randomization', {})
     include_trainees = class_rules.get('include_trainees', True)
