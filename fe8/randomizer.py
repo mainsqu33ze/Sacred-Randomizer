@@ -1888,6 +1888,18 @@ def _move_group_key(move_table_ptr: int) -> str:
     return 'foot'
 
 
+def _upgrade_weapon(rom: ROM, weapon_pools: dict, item: 'ItemData',
+                    class_ranks: List[int]) -> Optional[int]:
+    wep_type = item.weapon_type
+    current_rank = item.weapon_rank
+    pool = weapon_pools.get(wep_type, [])
+    candidates = [
+        iid for iid, rank in pool
+        if rank > current_rank and rank <= class_ranks[wep_type]
+    ]
+    return random.choice(candidates) if candidates else None
+
+
 def randomize_enemies(rom: ROM, config: dict,
                       ud_arrays: List[Tuple[int, int]],
                       ch_ud_arrays: List[Tuple[int, int]],
@@ -1902,6 +1914,7 @@ def randomize_enemies(rom: ROM, config: dict,
     include_monsters = rules.get('include_monsters', False)
     include_bosses = rules.get('include_bosses', False)
     randomize_monster_classes = rules.get('randomize_monster_classes', False)
+    weapon_upgrade_chance = rules.get('weapon_upgrade_chance', 0)
     omit_jids = _parse_omit_classes(config, 'enemy_randomization')
 
     pid_range = [p for p in range(35, 256) if p != FINAL_BOSS_PID]
@@ -2076,11 +2089,11 @@ def randomize_enemies(rom: ROM, config: dict,
 
             cd.write(rom)
 
-    # Phase B + C: UD array class overrides and items
+    # Phase B + C + D: UD array class overrides, items, and weapon upgrades
     boss_final_classes = {}
-    if rand_classes or rand_items:
+    if rand_classes or rand_items or weapon_upgrade_chance > 0:
         include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
-        if weapon_pools is None and rand_items:
+        if weapon_pools is None and (rand_items or weapon_upgrade_chance > 0):
             weapon_pools = build_weapon_pools(rom, include_ballista)
 
         if tqdm:
@@ -2172,6 +2185,23 @@ def randomize_enemies(rom: ROM, config: dict,
                                     new_items[slot_idx] = new_item_id
                                     break
 
+                    if new_items != old_items:
+                        rom.data[arr_pos + 12 : arr_pos + 16] = bytes(new_items)
+
+                # Phase D: Weapon upgrades (independent of class/item randomization)
+                if weapon_upgrade_chance > 0 and random.randint(1, 100) <= weapon_upgrade_chance:
+                    old_items = list(rom.data[arr_pos + 12 : arr_pos + 16])
+                    new_items = list(old_items)
+                    for slot_idx in range(4):
+                        item_id = old_items[slot_idx]
+                        if item_id == 0:
+                            continue
+                        item = ItemData(rom, item_id)
+                        if not item.is_weapon():
+                            continue
+                        new_id = _upgrade_weapon(rom, weapon_pools, item, new_class.baseWexp)
+                        if new_id is not None:
+                            new_items[slot_idx] = new_id
                     if new_items != old_items:
                         rom.data[arr_pos + 12 : arr_pos + 16] = bytes(new_items)
 
