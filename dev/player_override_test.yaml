@@ -1,0 +1,61 @@
+seed: 1
+class_randomization:
+  mode: shuffle
+  manakete_count: 0
+  omit_classes: []
+  include_soldier: false
+  include_trainees: true
+  palette_mapping: true
+  portrait_palettes: true
+  gender_lock: false
+
+growth_randomization:
+  character: false
+  class: false
+
+base_stat_randomization:
+  character: false
+  class: false
+
+item_randomization:
+  enabled: false
+  mode: random
+  randomize_events: false
+
+weapon_randomization:
+  enabled: false
+
+weapon_effects:
+  enabled: false
+
+affinity_randomization:
+  enabled: false
+
+promotion_items:
+  enabled: false
+  master_seal_universal: false
+  replace_distribution: false
+
+enemy_randomization:
+  enabled: false
+
+loot_randomization:
+  enabled: false
+  mode: random
+
+recruitment_randomization:
+  enabled: false
+
+player_units_override:
+  enabled: true
+  include_overridden_in_recruitment: false
+  replacements:
+    - original: Eirika
+      replacement: Seth
+      class: Paladin
+    - original: Seth
+      replacement: Eirika
+  trainee_units:
+    - Ross
+    - Amelia
+    - Ewan
