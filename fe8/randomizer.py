@@ -853,8 +853,8 @@ def parse_player_units_override(config: dict) -> dict:
 def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
     """Apply player-defined unit replacements via CharacterData swaps.
 
-    Copies the CharacterData block, palette table entries, and portrait
-    entries from each replacing_pid's slot to the original_pid's slot.
+    Swaps the CharacterData block, palette table entries, and portrait
+    entries between each replacing_pid's slot and the original_pid's slot.
 
     Args:
         rom: The ROM object
@@ -867,7 +867,7 @@ def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
         return set()
 
     pids = set(replacement_map.keys()) | set(replacement_map.values())
-    modified = set(replacement_map.keys())
+    modified = set(replacement_map.keys()) | set(replacement_map.values())
 
     char_table_off = rom_offset(CHARACTER_TABLE_ADDR)
     char_data = {}
@@ -877,11 +877,14 @@ def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
 
     for orig_pid, repl_pid in replacement_map.items():
         dst_off = char_table_off + (orig_pid - 1) * PINFO_SIZE
+        src_off = char_table_off + (repl_pid - 1) * PINFO_SIZE
         for j in range(PINFO_SIZE):
             if j == 4:
                 continue
             rom.data[dst_off + j] = char_data[repl_pid][j]
+            rom.data[src_off + j] = char_data[orig_pid][j]
         rom.data[dst_off + 4] = orig_pid
+        rom.data[src_off + 4] = repl_pid
 
     pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
     pal_cls_off = pal_cls_gba - ROM_BASE
@@ -892,6 +895,8 @@ def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
     for orig_pid, repl_pid in replacement_map.items():
         dst_off = pal_cls_off + (orig_pid - 1) * PALETTE_ENTRY_SIZE
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_cls_data[repl_pid]
+        src_off = pal_cls_off + (repl_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[src_off:src_off + PALETTE_ENTRY_SIZE] = pal_cls_data[orig_pid]
 
     pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
     pal_idx_off = pal_idx_gba - ROM_BASE
@@ -902,19 +907,12 @@ def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
     for orig_pid, repl_pid in replacement_map.items():
         dst_off = pal_idx_off + (orig_pid - 1) * PALETTE_ENTRY_SIZE
         rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[repl_pid]
+        src_off = pal_idx_off + (repl_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[src_off:src_off + PALETTE_ENTRY_SIZE] = pal_idx_data[orig_pid]
 
-    from .fe8rom import PID_TO_PORTRAIT_SLOT, PORTRAIT_TABLE_ADDR, PORTRAIT_ENTRY_SIZE
-    portrait_snap = {}
-    for pid in pids:
-        slot = PID_TO_PORTRAIT_SLOT.get(pid)
-        if slot is not None:
-            off = rom_offset(PORTRAIT_TABLE_ADDR) + slot * PORTRAIT_ENTRY_SIZE
-            portrait_snap[pid] = bytearray(rom.data[off:off + PORTRAIT_ENTRY_SIZE])
+    from .fe8rom import swap_portrait_entries
     for orig_pid, repl_pid in replacement_map.items():
-        if orig_pid in portrait_snap and repl_pid in portrait_snap:
-            dst_slot = PID_TO_PORTRAIT_SLOT[orig_pid]
-            dst_off = rom_offset(PORTRAIT_TABLE_ADDR) + dst_slot * PORTRAIT_ENTRY_SIZE
-            rom.data[dst_off:dst_off + PORTRAIT_ENTRY_SIZE] = portrait_snap[repl_pid]
+        swap_portrait_entries(rom, orig_pid, repl_pid)
 
     for pid in modified:
         off = char_table_off + (pid - 1) * PINFO_SIZE
