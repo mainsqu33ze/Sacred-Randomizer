@@ -144,7 +144,7 @@ enemy_randomization:
   randomize_items: false                  # true = assign weapons compatible with their new class
   randomize_monster_classes: false       # true = randomize monster enemies into other classes
   include_monsters: false                # true = allow enemies to randomize into monster classes
-  include_bosses: false                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
+  include_bosses: true                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
   weapon_upgrade_chance: 50              # percent chance (0-100) a unit's weapon tier is improved
   omit_classes: []                       # List of JID enum names to exclude, e.g. [SHAMAN, MERCENARY]
   boss_buffs:                            # Applied only when include_bosses: true
