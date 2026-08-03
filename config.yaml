@@ -170,3 +170,18 @@ loot_randomization:
   #   Chest items are not randomized (Location Events scan is disabled
   #   due to false positives with Always Events / Map Objects).
   #   See AGENTS.md for the full exclusion list.
+
+# ---------------------------------------------------------------------------
+# PLAYER UNITS OVERRIDE
+# ---------------------------------------------------------------------------
+# Lets you specify exactly which units appear in which recruitment slots,
+# optionally overriding their class. Independent of recruitment randomization.
+# trainee_units fully replaces the hardcoded Ross/Amelia/Ewan (max 3).
+player_units_override:
+  enabled: false
+  include_overridden_in_recruitment: false  # when true, overridden PIDs can also be shuffled
+  replacements:
+    # - original: Eirika
+    #   replacement: Seth
+    #   class: Paladin
+  trainee_units: []

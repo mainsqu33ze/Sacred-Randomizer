@@ -156,7 +156,7 @@ MALE_FEMALE_PAIRS = [
     (JID.GREAT_KNIGHT, JID.GREAT_KNIGHT_F),
 ]
 
-TRAINEE_PIDS = frozenset({PID.ROSS, PID.AMELIA, PID.EWAN})
+TRAINEE_PIDS = {PID.ROSS, PID.AMELIA, PID.EWAN}
 TRAINEE_JIDS = frozenset({JID.JOURNEYMAN, JID.PUPIL, JID.RECRUIT})
 
 MANAKETE_JIDS = frozenset({JID.MANAKETE, JID.MANAKETE_2, JID.MANAKETE_MYRRH})
@@ -680,12 +680,18 @@ def _remap_trainee_table(rom: ROM) -> int:
 # Recruitment order
 # ---------------------------------------------------------------------------
 
-def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = True) -> Set[int]:
+def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = True,
+                                 exclude_pids: Set[int] = None) -> Set[int]:
     rules = config.get('recruitment_randomization', {})
     if not rules.get('enabled', False):
         return set()
 
     pids = sorted(PLAYABLE_PLAYABLE_PIDS)
+    if exclude_pids:
+        pids = sorted(set(pids) - set(exclude_pids))
+        if len(pids) < 2:
+            return set()
+
     n = len(pids)
 
     if preserve_tier:
@@ -778,6 +784,170 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     label = " (tier-preserving)" if preserve_tier else ""
     _vprint(f"Randomized recruitment order for {n} units{label}")
     return set(pids)
+
+
+# ---------------------------------------------------------------------------
+# Player units override
+# ---------------------------------------------------------------------------
+
+def parse_player_units_override(config: dict) -> dict:
+    """Parse the player_units_override config section.
+
+    Returns:
+        dict with keys:
+            enabled: bool
+            replacement_map: dict[int, int]  # original_pid -> replacing_pid
+            class_overrides: dict[int, int]  # original_pid -> class_jid
+            include_overridden_in_recruit: bool
+            trainee_pids: set[int]  # PIDs whose replacement class is a trainee JID
+    """
+    puo = config.get('player_units_override', {})
+    result = {
+        'enabled': puo.get('enabled', False),
+        'replacement_map': {},
+        'class_overrides': {},
+        'include_overridden_in_recruit': puo.get('include_overridden_in_recruitment', False),
+        'trainee_pids': set(),
+    }
+    if not result['enabled']:
+        return result
+
+    trainee_jid_values = {j.value for j in TRAINEE_JIDS}
+
+    for entry in puo.get('replacements', []):
+        orig_name = entry.get('original', '').strip().upper()
+        repl_name = entry.get('replacement', '').strip().upper()
+        class_name = entry.get('class', '').strip().upper()
+
+        if not orig_name or not repl_name:
+            continue
+        if orig_name not in PID.__members__:
+            raise ValueError(f"Unknown PID '{orig_name}' in player_units_override.replacements")
+        if repl_name not in PID.__members__:
+            raise ValueError(f"Unknown PID '{repl_name}' in player_units_override.replacements")
+
+        orig_pid = PID[orig_name]
+        repl_pid = PID[repl_name]
+
+        if orig_pid not in PLAYABLE_PLAYABLE_PIDS:
+            raise ValueError(f"original PID '{orig_name}' is not a playable character")
+        if repl_pid not in PLAYABLE_PLAYABLE_PIDS:
+            raise ValueError(f"replacement PID '{repl_name}' is not a playable character")
+
+        result['replacement_map'][orig_pid] = repl_pid
+
+        if class_name:
+            if class_name not in JID.__members__:
+                raise ValueError(f"Unknown JID '{class_name}' in player_units_override.replacements")
+            class_jid = JID[class_name]
+            result['class_overrides'][orig_pid] = class_jid
+            if class_jid.value in trainee_jid_values:
+                result['trainee_pids'].add(orig_pid)
+
+    if len(result['trainee_pids']) > 3:
+        raise ValueError("Maximum of 3 trainee units allowed in player_units_override.replacements")
+
+    return result
+
+
+def apply_player_override(rom: ROM, replacement_map: dict) -> Set[int]:
+    """Apply player-defined unit replacements via CharacterData swaps.
+
+    Swaps the CharacterData block, palette table entries, and portrait
+    entries between each replacing_pid's slot and the original_pid's slot.
+
+    Args:
+        rom: The ROM object
+        replacement_map: {original_pid: replacing_pid, ...}
+
+    Returns:
+        Set of modified PIDs
+    """
+    if not replacement_map:
+        return set()
+
+    pids = set(replacement_map.keys()) | set(replacement_map.values())
+    modified = set(replacement_map.keys()) | set(replacement_map.values())
+
+    char_table_off = rom_offset(CHARACTER_TABLE_ADDR)
+    char_data = {}
+    for pid in pids:
+        off = char_table_off + (pid - 1) * PINFO_SIZE
+        char_data[pid] = bytearray(rom.data[off:off + PINFO_SIZE])
+
+    for orig_pid, repl_pid in replacement_map.items():
+        dst_off = char_table_off + (orig_pid - 1) * PINFO_SIZE
+        src_off = char_table_off + (repl_pid - 1) * PINFO_SIZE
+        for j in range(PINFO_SIZE):
+            if j == 4:
+                continue
+            rom.data[dst_off + j] = char_data[repl_pid][j]
+            rom.data[src_off + j] = char_data[orig_pid][j]
+        rom.data[dst_off + 4] = orig_pid
+        rom.data[src_off + 4] = repl_pid
+
+    pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
+    pal_cls_off = pal_cls_gba - ROM_BASE
+    pal_cls_data = {}
+    for pid in pids:
+        off = pal_cls_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        pal_cls_data[pid] = bytearray(rom.data[off:off + PALETTE_ENTRY_SIZE])
+    for orig_pid, repl_pid in replacement_map.items():
+        dst_off = pal_cls_off + (orig_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_cls_data[repl_pid]
+        src_off = pal_cls_off + (repl_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[src_off:src_off + PALETTE_ENTRY_SIZE] = pal_cls_data[orig_pid]
+
+    pal_idx_gba = _U32.unpack_from(rom.data, PALETTE_INDEX_TABLE_PTR_OFF)[0]
+    pal_idx_off = pal_idx_gba - ROM_BASE
+    pal_idx_data = {}
+    for pid in pids:
+        off = pal_idx_off + (pid - 1) * PALETTE_ENTRY_SIZE
+        pal_idx_data[pid] = bytearray(rom.data[off:off + PALETTE_ENTRY_SIZE])
+    for orig_pid, repl_pid in replacement_map.items():
+        dst_off = pal_idx_off + (orig_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[dst_off:dst_off + PALETTE_ENTRY_SIZE] = pal_idx_data[repl_pid]
+        src_off = pal_idx_off + (repl_pid - 1) * PALETTE_ENTRY_SIZE
+        rom.data[src_off:src_off + PALETTE_ENTRY_SIZE] = pal_idx_data[orig_pid]
+
+    from .fe8rom import swap_portrait_entries
+    for orig_pid, repl_pid in replacement_map.items():
+        swap_portrait_entries(rom, orig_pid, repl_pid)
+
+    for pid in modified:
+        off = char_table_off + (pid - 1) * PINFO_SIZE
+        orig_fid = struct.unpack_from('<H', char_data[pid], 6)[0]
+        struct.pack_into('<H', rom.data, off + 6, orig_fid)
+
+    _remap_trainee_table(rom)
+
+    _vprint(f"Applied player override for {len(replacement_map)} unit(s)")
+    return modified
+
+
+def apply_class_overrides(rom: ROM, class_overrides: dict) -> Set[int]:
+    """Force-set class JIDs for PIDs specified in player_units_override.
+
+    Called after class randomization to ensure override-specified
+    classes take precedence.
+
+    Args:
+        rom: The ROM object
+        class_overrides: {pid: class_jid, ...}
+
+    Returns:
+        Set of modified PIDs
+    """
+    modified = set()
+    for pid, jid in class_overrides.items():
+        cd = CharacterData(rom, pid)
+        cd.jidDefault = jid
+        _adjust_weapon_ranks(cd, jid, rom)
+        cd.write(rom)
+        modified.add(pid)
+    if modified:
+        _vprint(f"Applied class overrides for {len(modified)} unit(s)")
+    return modified
 
 
 def _sync_shared_pid_classes(rom: ROM) -> None:
@@ -2648,7 +2818,7 @@ def randomize_palette_mappings(rom: ROM, pid_set: Set[int],
 
 def _enforce_pid_tiers(rom: ROM, config: dict) -> Set[int]:
     unprompted_pids = {1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 25, 31}
-    trainee_pids = {7, 18, 24}
+    trainee_pids = set(TRAINEE_PIDS)
     weapon_req_pids = {2, 19}
 
     class_rules = config.get('class_randomization', {})
@@ -3088,6 +3258,21 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     recruit_mode = recruit_rules.get('mode', 'pre')
     preserve_tier = recruit_rules.get('preserve_tier', True)
 
+    puo_result = parse_player_units_override(config)
+    puo_enabled = puo_result['enabled']
+    replacement_map = puo_result['replacement_map']
+    class_overrides = puo_result['class_overrides']
+    include_overridden_in_recruit = puo_result['include_overridden_in_recruit']
+    puo_trainee_pids = puo_result['trainee_pids']
+
+    recruit_exclude_pids = set()
+    if puo_enabled and replacement_map and not include_overridden_in_recruit:
+        recruit_exclude_pids = set(replacement_map.keys())
+
+    if puo_enabled and puo_trainee_pids:
+        global TRAINEE_PIDS
+        TRAINEE_PIDS = puo_trainee_pids
+
     # Cache scan results once
     data = rom.data
     rom_size = len(data)
@@ -3104,14 +3289,18 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     modified_pids = set()
 
+    if puo_enabled and replacement_map:
+        modified_pids |= apply_player_override(rom, replacement_map)
+
     if recruit_enabled and recruit_mode == 'pre':
-        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids)
 
     original_jids = {pid: CharacterData(rom, pid).jidDefault
                      for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
 
     class_pids = randomize_class(rom, config)
     modified_pids |= class_pids
+
     trainee_patched = _update_trainee_promotion_table(rom, class_pids)
     if trainee_patched:
         _vprint(f"Updated {trainee_patched} trainee promotion table entr(y/ies)")
@@ -3119,12 +3308,15 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     randomize_base_stats(rom, config)
 
     if recruit_enabled and recruit_mode == 'post':
-        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier)
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids)
 
     enforced_pids = _enforce_pid_tiers(rom, config)
     if enforced_pids:
         modified_pids |= enforced_pids
         _vprint(f"Enforced class tier constraints for {len(enforced_pids)} unit(s)")
+
+    if puo_enabled and class_overrides:
+        modified_pids |= apply_class_overrides(rom, class_overrides)
 
     synchronize_promotion_gains(rom)
     randomize_affinity(rom, config)

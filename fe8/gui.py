@@ -3,8 +3,8 @@ from tkinter import ttk, filedialog, messagebox
 import yaml
 import traceback
 import os
-from fe8.fe8rom import JID
-from fe8.randomizer import STANDARD_JIDS, ENEMY_EXCLUDED_JIDS, TRAINEE_JIDS
+from fe8.fe8rom import JID, PID
+from fe8.randomizer import STANDARD_JIDS, ENEMY_EXCLUDED_JIDS, TRAINEE_JIDS, PLAYABLE_PLAYABLE_PIDS
 
 
 class FE8RandomizerGUI(tk.Tk):
@@ -118,6 +118,11 @@ class FE8RandomizerGUI(tk.Tk):
         self.recruit_enabled = tk.BooleanVar(value=False)
         self.recruit_mode = tk.StringVar(value="pre")
         self.recruit_preserve_tier = tk.BooleanVar(value=True)
+
+        # Player Units Override
+        self.puo_enabled = tk.BooleanVar(value=False)
+        self.puo_include_in_recruit = tk.BooleanVar(value=False)
+        self.puo_rows = []
 
         # Enemy Settings
         self.enemy_enabled = tk.BooleanVar(value=True)
@@ -308,6 +313,93 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Label(card, text="When swapping recruitment data, a promoted character (e.g. Seth) only\nswaps with other promoted slots. Safer for game balance — prevents\nprepromotes in early-game unpromoted slots. Disable for full chaos.", foreground="#555", font=("Segoe UI", 9)).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
 
         ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan restriction to trainees is toggleable in the Classes tab.\nSeth gets a combat weapon guarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
+
+        self._build_puo_card(tab)
+
+    def _puo_class_list(self):
+        base = set(STANDARD_JIDS)
+        base |= TRAINEE_JIDS
+        return sorted([jid.name for jid in JID if jid.value in base])
+
+    def _puo_has_trainee_class(self):
+        trainee_jids = {j.name for j in TRAINEE_JIDS}
+        return any(
+            row['class_var'].get() in trainee_jids
+            for row in self.puo_rows
+        )
+
+    def include_trainees_state_update(self):
+        if self.puo_enabled.get() and self._puo_has_trainee_class():
+            self.include_trainees.set(False)
+
+    def _build_puo_card(self, tab):
+        puo_card = ttk.LabelFrame(tab, text=" Player Units Override ", padding=10)
+        puo_card.pack(fill=tk.X, pady=4)
+
+        ttk.Checkbutton(puo_card, text="Enable player units override (custom unit replacements)",
+                        variable=self.puo_enabled).grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=4)
+        ttk.Checkbutton(puo_card, text="Include overridden units in recruitment shuffle",
+                        variable=self.puo_include_in_recruit).grid(row=1, column=0, columnspan=4, sticky=tk.W, padx=15, pady=2)
+        ttk.Label(puo_card, text="When unchecked, units listed below are excluded from recruitment shuffle.",
+                  foreground="#555", font=("Segoe UI", 9)).grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=25, pady=(0,6))
+
+        hdr = ttk.Frame(puo_card)
+        hdr.grid(row=3, column=0, columnspan=4, sticky=tk.EW, pady=2)
+        ttk.Label(hdr, text="Original Unit", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, padx=4)
+        ttk.Label(hdr, text="→ Replacing Unit", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, padx=20)
+        ttk.Label(hdr, text="Class (optional)", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, padx=4)
+
+        self.puo_rows_frame = ttk.Frame(puo_card)
+        self.puo_rows_frame.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=2)
+
+        add_btn = ttk.Button(puo_card, text="+ Add Replacement", command=self._puo_add_row)
+        add_btn.grid(row=5, column=0, sticky=tk.W, pady=4)
+
+        self.puo_enabled.trace('w', lambda *_: self.include_trainees_state_update())
+
+    def _puo_add_row(self, original_value="", replacement_value="", class_value=""):
+        pid_names = sorted([pid.name for pid in PID if pid.value in PLAYABLE_PLAYABLE_PIDS])
+        jid_names = self._puo_class_list()
+
+        row_index = len(self.puo_rows)
+        frame = ttk.Frame(self.puo_rows_frame)
+        frame.pack(fill=tk.X, pady=1)
+
+        orig_var = tk.StringVar(value=original_value)
+        repl_var = tk.StringVar(value=replacement_value)
+        cls_var = tk.StringVar(value=class_value)
+
+        ttk.Combobox(frame, textvariable=orig_var, values=pid_names, state="readonly", width=16).grid(row=0, column=0, padx=2)
+        ttk.Label(frame, text="→").grid(row=0, column=1, padx=4)
+        ttk.Combobox(frame, textvariable=repl_var, values=pid_names, state="readonly", width=16).grid(row=0, column=2, padx=2)
+        class_cbox = ttk.Combobox(frame, textvariable=cls_var, values=[""] + jid_names, state="readonly", width=18)
+        class_cbox.grid(row=0, column=3, padx=2)
+
+        del_btn = ttk.Button(frame, text="✕", width=3,
+                             command=lambda idx=row_index: self._puo_remove_row(idx))
+        del_btn.grid(row=0, column=4, padx=2)
+
+        row_data = {
+            'frame': frame,
+            'original_var': orig_var,
+            'replacement_var': repl_var,
+            'class_var': cls_var,
+            'class_cbox': class_cbox,
+        }
+        self.puo_rows.append(row_data)
+
+        cls_var.trace('w', lambda *_: self.include_trainees_state_update())
+
+        self.include_trainees_state_update()
+
+        return row_data
+
+    def _puo_remove_row(self, index):
+        if 0 <= index < len(self.puo_rows):
+            row = self.puo_rows[index]
+            row['frame'].destroy()
+            del self.puo_rows[index]
+            self.include_trainees_state_update()
 
     def _build_stats_tab(self):
         tab = self._scrollable_tab("Stats & Growths")
@@ -693,6 +785,19 @@ class FE8RandomizerGUI(tk.Tk):
                 "mode": self.recruit_mode.get(),
                 "preserve_tier": self.recruit_preserve_tier.get(),
             },
+            "player_units_override": {
+                "enabled": self.puo_enabled.get(),
+                "include_overridden_in_recruitment": self.puo_include_in_recruit.get(),
+                "replacements": [
+                    {
+                        "original": row['original_var'].get(),
+                        "replacement": row['replacement_var'].get(),
+                        "class": row['class_var'].get(),
+                    }
+                    for row in self.puo_rows
+                    if row['original_var'].get() and row['replacement_var'].get()
+                ],
+            },
             "affinity_randomization": {
                 "enabled": self.affinity_randomization.get(),
             },
@@ -876,6 +981,21 @@ class FE8RandomizerGUI(tk.Tk):
             self.recruit_enabled.set(_bool(rr.get("enabled")))
             self.recruit_mode.set(rr.get("mode", "pre"))
             self.recruit_preserve_tier.set(rr.get("preserve_tier", True))
+
+            puo = d.get("player_units_override", {})
+            self.puo_enabled.set(_bool(puo.get("enabled")))
+            self.puo_include_in_recruit.set(_bool(puo.get("include_overridden_in_recruitment")))
+
+            for row in list(self.puo_rows):
+                row['frame'].destroy()
+            self.puo_rows.clear()
+
+            for entry in puo.get("replacements", []):
+                self._puo_add_row(
+                    original_value=entry.get("original", ""),
+                    replacement_value=entry.get("replacement", ""),
+                    class_value=entry.get("class", ""),
+                )
 
             af = d.get("affinity_randomization", {})
             self.affinity_randomization.set(_bool(af.get("enabled")))
