@@ -118,6 +118,7 @@ class FE8RandomizerGUI(tk.Tk):
         self.recruit_enabled = tk.BooleanVar(value=False)
         self.recruit_mode = tk.StringVar(value="pre")
         self.recruit_preserve_tier = tk.BooleanVar(value=True)
+        self.recruit_keep_bases = tk.BooleanVar(value=True)
 
         # Player Units Override
         self.puo_enabled = tk.BooleanVar(value=False)
@@ -312,7 +313,10 @@ class FE8RandomizerGUI(tk.Tk):
         ttk.Checkbutton(card, text="Preserve class tiers during swap (promoted ↔ promoted only)", variable=self.recruit_preserve_tier).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=0, pady=4)
         ttk.Label(card, text="When swapping recruitment data, a promoted character (e.g. Seth) only\nswaps with other promoted slots. Safer for game balance — prevents\nprepromotes in early-game unpromoted slots. Disable for full chaos.", foreground="#555", font=("Segoe UI", 9)).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
 
-        ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan restriction to trainees is toggleable in the Classes tab.\nSeth gets a combat weapon guarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
+        ttk.Checkbutton(card, text="Keep bases in their original slot (level / stats / weapon ranks)", variable=self.recruit_keep_bases).grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=0, pady=4)
+        ttk.Label(card, text="When ON, each story slot keeps its original base stats — the character\nwho moves into that slot inherits the slot's bases (e.g. Eirika in Seth's\nslot gets Seth's bases). When OFF, bases travel with the character.", foreground="#555", font=("Segoe UI", 9)).grid(row=6, column=0, columnspan=2, sticky=tk.W, padx=15, pady=2)
+
+        ttk.Label(card, text="PID 1 and PID 15 are the main lords — game over if they fall in battle.\nThey are NOT restricted to lord classes and can be any class.\nRoss/Amelia/Ewan restriction to trainees is toggleable in the Classes tab.\nSeth gets a combat weapon guarantee for cutscenes (unconditional, no toggle).", foreground="#555", font=("Segoe UI", 9)).grid(row=7, column=0, columnspan=2, sticky=tk.W, padx=15, pady=6)
 
         self._build_puo_card(tab)
 
@@ -784,6 +788,7 @@ class FE8RandomizerGUI(tk.Tk):
                 "enabled": self.recruit_enabled.get(),
                 "mode": self.recruit_mode.get(),
                 "preserve_tier": self.recruit_preserve_tier.get(),
+                "keep_slot_bases": self.recruit_keep_bases.get(),
             },
             "player_units_override": {
                 "enabled": self.puo_enabled.get(),
@@ -981,6 +986,7 @@ class FE8RandomizerGUI(tk.Tk):
             self.recruit_enabled.set(_bool(rr.get("enabled")))
             self.recruit_mode.set(rr.get("mode", "pre"))
             self.recruit_preserve_tier.set(rr.get("preserve_tier", True))
+            self.recruit_keep_bases.set(_bool(rr.get("keep_slot_bases", True)))
 
             puo = d.get("player_units_override", {})
             self.puo_enabled.set(_bool(puo.get("enabled")))

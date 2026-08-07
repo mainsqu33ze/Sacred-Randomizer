@@ -138,6 +138,7 @@ recruitment_randomization:
   enabled: false           # true = shuffle character data among playable PIDs
   mode: pre                # 'pre' or 'post' — when to swap relative to class/stats
   preserve_tier: true      # promote↔promoted only; prevent prepromotes in early slots
+  keep_slot_bases: true    # true = bases stay in their original slot; false = travel with identity
 ```
 
 When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unused PID 27) are permuted. Each PID slot keeps its own `id` self-reference byte, so the game still knows which characters are the main lords (PID 1 = Eirika, PID 15 = Ephraim) for game-over and story purposes — but all other data follows the swapped block.
@@ -147,6 +148,8 @@ When enabled, the 33 playable CharacterData blocks (PIDs 1–34, excluding unuse
 **`mode: post`**: randomize classes/stats/growths first, then swap. Each character carries their pre-rolled class and stats to their new PID slot. Useful if you want a specific set of stats (e.g., those from the seed) to follow the character rather than the slot.
 
 **`preserve_tier: true`** (default): when swapping, characters are grouped by class tier (trainee, unpromoted, promoted) so a prepromote like Seth (promoted) only swaps with other promoted units. This prevents Seth's stats from appearing in an early-game unpromoted slot like Franz's. Disable (`false`) for full chaos — any character can end up in any slot.
+
+**`keep_slot_bases: true`** (default): when swapping, each PID slot keeps its original level, base stats, and weapon ranks. The identity (portrait, name, class, growths) moves to a new slot, but the character who lands in that slot inherits the slot's bases — e.g., if Eirika swaps with Seth, Eirika's identity ends up in Seth's slot with Seth's bases, and Seth's identity ends up in Eirika's slot with Eirika's bases. Set to `false` for the original full-swap behavior where bases travel with the character identity.
 
 **Palette lockstep:** PaletteClassTable and PaletteIndexTable entries (7 bytes each per PID) are swapped alongside the CharacterData so each character's custom palette colours follow their portrait and data to the new PID slot.
 
@@ -421,6 +424,7 @@ recruitment_randomization:
   enabled: false
   mode: pre
   preserve_tier: true
+  keep_slot_bases: true
 
 growth_randomization:
   character: false
