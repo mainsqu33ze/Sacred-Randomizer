@@ -209,7 +209,7 @@ class FE8RandomizerGUI(tk.Tk):
         card.pack(fill=tk.X, pady=4)
 
         ttk.Label(card, text="Mode:").grid(row=0, column=0, sticky=tk.W, pady=4)
-        ttk.Combobox(card, textvariable=self.class_mode, values=["shuffle", "random"], state="readonly").grid(row=0, column=1, sticky=tk.W, padx=6)
+        ttk.Combobox(card, textvariable=self.class_mode, values=["shuffle", "random", "false"], state="readonly").grid(row=0, column=1, sticky=tk.W, padx=6)
 
         ttk.Label(card, text="Manakete count:").grid(row=1, column=0, sticky=tk.W, pady=4)
         ttk.Spinbox(card, from_=0, to=10, textvariable=self.manakete_count, width=5).grid(row=1, column=1, sticky=tk.W, padx=6)
