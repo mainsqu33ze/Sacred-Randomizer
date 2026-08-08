@@ -1,0 +1,108 @@
+affinity_randomization:
+  enabled: false
+base_stat_randomization:
+  character: false
+  class: false
+  con:
+    enabled: false
+    min: 1
+    player_min: 1
+    stddev: 3
+  cross_tier_scramble: false
+  mean: null
+  preserve_base: true
+  shuffle_con_mov: false
+  stddev: 3
+class_randomization:
+  gender_lock: true
+  include_soldier: false
+  include_trainees: true
+  manakete_count: 1
+  mode: 'false'
+  omit_classes:
+  - BARD
+  palette_mapping: true
+  portrait_palettes: true
+enemy_randomization:
+  boss_buffs:
+    base_stats:
+      buff_range: 0.3
+      mean: null
+      mode: false
+      stddev: 3
+    growths:
+      buff_range: 0.3
+      mean: null
+      mode: false
+      stddev: 10
+    max_weapon_ranks: false
+  enabled: false
+  include_bosses: false
+  include_monsters: false
+  omit_classes: []
+  randomize_classes: false
+  randomize_items: false
+  randomize_monster_classes: false
+  weapon_upgrade_chance: 50
+growth_randomization:
+  character: false
+  class: false
+  class_buff_range: 0.5
+  max: 100
+  mean: null
+  min: 0
+  pool_total: null
+  stddev: 10
+item_randomization:
+  enabled: true
+  mode: random
+  randomize_events: true
+loot_randomization:
+  enabled: false
+  mode: random
+player_units_override:
+  enabled: true
+  include_overridden_in_recruitment: false
+  replacements:
+  - class: GREAT_KNIGHT
+    original: EIRIKA
+    replacement: DUESSEL
+promotion_items:
+  enabled: false
+  master_seal_universal: false
+  replace_distribution: false
+recruitment_randomization:
+  enabled: false
+  keep_slot_bases: false
+  mode: pre
+  preserve_tier: true
+seed: 42
+weapon_effects:
+  brave: 1
+  devil: 5
+  eclipse: 1
+  enabled: false
+  nosferatu: 1
+  poison: 2
+  reaver: 1
+  stone: 1
+weapon_randomization:
+  crit: true
+  crit_stddev: 5
+  enabled: false
+  hit: true
+  hit_stddev: 20
+  max_crit: 30
+  max_hit: 120
+  max_might: 20
+  max_weight: 20
+  mean: null
+  might: true
+  might_stddev: 3
+  min_crit: 0
+  min_hit: 30
+  min_might: 1
+  min_weight: 1
+  stddev: 5
+  weight: true
+  weight_stddev: 3
