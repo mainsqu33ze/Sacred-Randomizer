@@ -26,6 +26,19 @@ class_randomization:
   gender_lock: false          # Lock randomized classes to same gender as character (male/female variants swapped automatically)
 
 # ---------------------------------------------------------------------------
+# RECRUITMENT ORDER
+# ---------------------------------------------------------------------------
+# Shuffles which character's identity (portrait, class, growths) occupies each
+# story recruit slot by permuting CharacterData blocks among playable PIDs.
+recruitment_randomization:
+  enabled: false             # true = shuffle character data among playable PIDs
+  mode: pre                  # 'pre' = swap then randomize; 'post' = randomize then swap
+  preserve_tier: true        # swap promoted<->promoted only; prevents prepromotes in early slots
+  keep_slot_bases: true      # true = each slot keeps its original level/stats/weapon ranks;
+                             #        the identity moving in inherits that slot's bases
+                             # false = bases travel with the character identity
+
+# ---------------------------------------------------------------------------
 # GROWTH RATES
 # ---------------------------------------------------------------------------
 # Controls how fast characters gain stats per level-up.

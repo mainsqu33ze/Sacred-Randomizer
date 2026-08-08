@@ -652,10 +652,21 @@ def _update_trainee_promotion_table(rom: ROM, modified_pids: Set[int]) -> int:
 def _remap_trainee_table(rom: ROM) -> int:
     off = rom_offset(TRAINEE_PROMO_TABLE_ADDR)
     trainee_pids = []
-    for pid in PLAYABLE_PLAYABLE_PIDS:
+    seen = set()
+    for pid in sorted(TRAINEE_PIDS):
+        if pid in seen:
+            continue
         cd = CharacterData(rom, pid)
         if cd.jidDefault in TRAINEE_JIDS:
             trainee_pids.append(pid)
+            seen.add(pid)
+    for pid in sorted(PLAYABLE_PLAYABLE_PIDS):
+        if pid in seen:
+            continue
+        cd = CharacterData(rom, pid)
+        if cd.jidDefault in TRAINEE_JIDS:
+            trainee_pids.append(pid)
+    trainee_pids = trainee_pids[:TRAINEE_PROMO_COUNT]
     patched = 0
     for i in range(TRAINEE_PROMO_COUNT):
         entry_off = off + i * TRAINEE_PROMO_ENTRY_SIZE
@@ -681,7 +692,8 @@ def _remap_trainee_table(rom: ROM) -> int:
 # ---------------------------------------------------------------------------
 
 def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = True,
-                                 exclude_pids: Set[int] = None) -> Set[int]:
+                                 exclude_pids: Set[int] = None,
+                                 keep_slot_bases: bool = True) -> Set[int]:
     rules = config.get('recruitment_randomization', {})
     if not rules.get('enabled', False):
         return set()
@@ -724,6 +736,16 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
                 continue
             rom.data[dst_off + j] = char_data[src_pid][j]
         rom.data[dst_off + 4] = dst_pid
+
+    # Anchored bases: keep each slot's original level, base stats, and weapon
+    # ranks in that slot. The character identity (portrait, class, growths,
+    # etc.) still moves, but whoever occupies a slot uses that slot's original
+    # bases. Restored from the pre-swap snapshot so the permutation order is
+    # irrelevant.
+    if keep_slot_bases:
+        for pid in pids:
+            off = char_table_off + (pid - 1) * PINFO_SIZE
+            rom.data[off + 0x0B:off + 0x1C] = char_data[pid][0x0B:0x1C]
 
     # Swap PaletteClassTable (7 bytes per PID)
     pal_cls_gba = _U32.unpack_from(rom.data, PALETTE_CLASS_TABLE_PTR_OFF)[0]
@@ -782,7 +804,8 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
         _vprint(f"Remapped {remapped} trainee promotion table entr(y/ies) after recruitment shuffle")
 
     label = " (tier-preserving)" if preserve_tier else ""
-    _vprint(f"Randomized recruitment order for {n} units{label}")
+    bases_label = " (bases anchored to slots)" if keep_slot_bases else ""
+    _vprint(f"Randomized recruitment order for {n} units{label}{bases_label}")
     return set(pids)
 
 
@@ -3257,6 +3280,7 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     recruit_enabled = recruit_rules.get('enabled', False)
     recruit_mode = recruit_rules.get('mode', 'pre')
     preserve_tier = recruit_rules.get('preserve_tier', True)
+    keep_slot_bases = recruit_rules.get('keep_slot_bases', True)
 
     puo_result = parse_player_units_override(config)
     puo_enabled = puo_result['enabled']
@@ -3293,7 +3317,8 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
         modified_pids |= apply_player_override(rom, replacement_map)
 
     if recruit_enabled and recruit_mode == 'pre':
-        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids)
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids,
+                                                     keep_slot_bases)
 
     original_jids = {pid: CharacterData(rom, pid).jidDefault
                      for pid in range(1, 256) if CharacterData(rom, pid).jidDefault != 0}
@@ -3308,7 +3333,8 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     randomize_base_stats(rom, config)
 
     if recruit_enabled and recruit_mode == 'post':
-        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids)
+        modified_pids |= randomize_recruitment_order(rom, config, preserve_tier, recruit_exclude_pids,
+                                                     keep_slot_bases)
 
     enforced_pids = _enforce_pid_tiers(rom, config)
     if enforced_pids:
@@ -3317,6 +3343,10 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
 
     if puo_enabled and class_overrides:
         modified_pids |= apply_class_overrides(rom, class_overrides)
+
+    trainee_patched = _remap_trainee_table(rom)
+    if trainee_patched:
+        _vprint(f"Rebuilt {trainee_patched} trainee promotion table entr(y/ies) after class overrides")
 
     synchronize_promotion_gains(rom)
     randomize_affinity(rom, config)
