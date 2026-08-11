@@ -44,6 +44,7 @@ PLAYABLE_PLAYABLE_PIDS = frozenset({
     PID.TETHYS, PID.MARISA, PID.SALEH, PID.EWAN, PID.LARACHEL,
     PID.DOZLA, PID.RENNAC, PID.DUESSEL, PID.MYRRH, PID.KNOLL,
     PID.JOSHUA, PID.SYRENE, PID.TANA,
+    0x2A,  # Orson (player version — temporary ally, Ch5x)
 })
 
 STANDARD_JIDS = frozenset({
@@ -110,6 +111,10 @@ ENEMY_EXCLUDED_JIDS = frozenset(
 )
 
 BOSS_PIDS = frozenset(set(range(0x40, 0x64)) | {0x28, 0x68, 0x6A, 0x6B, 0x6C, 0x6D})
+
+# PIDs that belong to player-controlled characters even though they fall inside
+# the enemy PID range. These must never be touched by enemy randomization.
+PLAYER_ONLY_PIDS = frozenset({0x2A})  # Orson (player version, Ch16)
 
 FINAL_BOSS_PID = 0xBE
 
@@ -293,6 +298,16 @@ def _adjust_weapon_ranks(cd: CharacterData, new_jid: int, rom: ROM) -> None:
         target = min(supported, key=lambda i: cd.baseWexp[i])
         if cd.baseWexp[target] < highest_lost:
             cd.baseWexp[target] = highest_lost
+
+
+def _union_weapon_types(class_wexps: List[List[int]]) -> Set[int]:
+    """Weapon types that any of the given class base-wexp arrays support."""
+    types = set()
+    for wexp in class_wexps:
+        for i in range(8):
+            if wexp[i] > 0:
+                types.add(i)
+    return types
 
 
 def _parse_omit_classes(config: dict, key: str = 'class_randomization') -> Set[int]:
@@ -698,7 +713,9 @@ def randomize_recruitment_order(rom: ROM, config: dict, preserve_tier: bool = Tr
     if not rules.get('enabled', False):
         return set()
 
-    pids = sorted(PLAYABLE_PLAYABLE_PIDS)
+    # Player-only PIDs (e.g. Orson) never take part in the identity shuffle,
+    # so they always stay in their own slot.
+    pids = sorted(PLAYABLE_PLAYABLE_PIDS - PLAYER_ONLY_PIDS)
     if exclude_pids:
         pids = sorted(set(pids) - set(exclude_pids))
         if len(pids) < 2:
@@ -973,7 +990,8 @@ def apply_class_overrides(rom: ROM, class_overrides: dict) -> Set[int]:
     return modified
 
 
-def _sync_shared_pid_classes(rom: ROM) -> None:
+def _sync_shared_pid_classes(rom: ROM,
+                             ud_offsets: Optional[List[int]] = None) -> None:
     sync_groups = [(42, 0x6D)]
     for src_pid, dst_pid in sync_groups:
         try:
@@ -983,13 +1001,23 @@ def _sync_shared_pid_classes(rom: ROM) -> None:
                 continue
             if cd_src.jidDefault != cd_dst.jidDefault:
                 cd_dst.jidDefault = cd_src.jidDefault
-                jd = ClassData(rom, cd_src.jidDefault)
-                new_ranks = list(cd_dst.baseWexp)
-                for i in range(8):
-                    new_ranks[i] = S_RANK_WEXP if jd.baseWexp[i] > 0 else 0
-                cd_dst.baseWexp = new_ranks
                 cd_dst.write(rom)
                 _vprint(f"Synced PID 0x{dst_pid:02X} class to PID {src_pid} (0x{cd_src.jidDefault:02X})")
+            jd = ClassData(rom, cd_src.jidDefault)
+            new_ranks = [S_RANK_WEXP if jd.baseWexp[i] > 0 else 0 for i in range(8)]
+            if new_ranks != cd_dst.baseWexp:
+                cd_dst.baseWexp = new_ranks
+                cd_dst.write(rom)
+            if ud_offsets:
+                for off in ud_offsets:
+                    arr_pos = off
+                    while arr_pos + UNIT_DEF_SIZE <= len(rom.data):
+                        chunk = rom.data[arr_pos:arr_pos + UNIT_DEF_SIZE]
+                        if all(b == 0 for b in chunk):
+                            break
+                        if chunk[0] == dst_pid:
+                            rom.data[arr_pos + 1] = cd_src.jidDefault
+                        arr_pos += UNIT_DEF_SIZE
         except Exception:
             pass
 
@@ -2110,7 +2138,8 @@ def randomize_enemies(rom: ROM, config: dict,
     weapon_upgrade_chance = rules.get('weapon_upgrade_chance', 0)
     omit_jids = _parse_omit_classes(config, 'enemy_randomization')
 
-    pid_range = [p for p in range(35, 256) if p != FINAL_BOSS_PID]
+    pid_range = [p for p in range(35, 256)
+                 if p != FINAL_BOSS_PID and p not in PLAYER_ONLY_PIDS]
     if not include_bosses:
         pid_range = [p for p in pid_range if p not in BOSS_PIDS]
 
@@ -2264,26 +2293,10 @@ def randomize_enemies(rom: ROM, config: dict,
                 (cd.baseHP, cd.basePow, cd.baseSkl, cd.baseSpd,
                  cd.baseDef, cd.baseRes, cd.baseLck) = stats
 
-            if boss_max_ranks:
-                jd = ClassData(rom, cd.jidDefault)
-                new_ranks = list(cd.baseWexp)
-                changed = False
-                for i in range(8):
-                    if jd.baseWexp[i] > 0:
-                        if new_ranks[i] < S_RANK_WEXP:
-                            new_ranks[i] = S_RANK_WEXP
-                            changed = True
-                    else:
-                        if new_ranks[i] != 0:
-                            new_ranks[i] = 0
-                            changed = True
-                if changed:
-                    cd.baseWexp = new_ranks
-
             cd.write(rom)
 
     # Phase B + C + D: UD array class overrides, items, and weapon upgrades
-    boss_final_classes = {}
+    boss_ud_classes = {}
     if rand_classes or rand_items or weapon_upgrade_chance > 0:
         include_ballista = config.get('item_randomization', {}).get('include_ballista_items', False)
         if weapon_pools is None and (rand_items or weapon_upgrade_chance > 0):
@@ -2300,7 +2313,7 @@ def randomize_enemies(rom: ROM, config: dict,
                     break
 
                 pid = chunk[0]
-                if pid <= 34 or pid > 255 or pid == FINAL_BOSS_PID:
+                if pid <= 34 or pid > 255 or pid == FINAL_BOSS_PID or pid in PLAYER_ONLY_PIDS:
                     arr_pos += UNIT_DEF_SIZE
                     continue
                 if pid in BOSS_PIDS and not include_bosses:
@@ -2334,8 +2347,8 @@ def randomize_enemies(rom: ROM, config: dict,
 
                 if rand_classes and new_jid != orig_jid:
                     rom.data[arr_pos + 1] = new_jid
-                    if pid in BOSS_PIDS:
-                        boss_final_classes[pid] = new_jid
+                if pid in BOSS_PIDS and new_jid != 0:
+                    boss_ud_classes.setdefault(pid, set()).add(new_jid)
 
                 if rand_items:
                     if not randomize_monster_classes and new_jid in MONSTER_WEAPON_POOLS:
@@ -2404,30 +2417,28 @@ def randomize_enemies(rom: ROM, config: dict,
             if tqdm: pbar.update(1)
         if tqdm: pbar.close()
 
-    # Sync CharacterData for bosses whose UD array class diverged from Phase A.
-    # Phase A and Phase B+C pick classes independently; weapon ranks were set
-    # based on Phase A's pick but the game uses the UD array class in battle.
-    if boss_final_classes and boss_max_ranks:
-        for pid, final_jid in boss_final_classes.items():
+    # Final weapon-rank reconciliation for bosses.
+    # Phase A (CharacterData) and Phase B/C (UD arrays) pick classes
+    # independently, and the game uses the UD array class in battle. Rank every
+    # weapon type a boss can use across all of its appearances to S, and adopt
+    # the UD class when a boss has exactly one distinct battle class.
+    if boss_pids_in_scope and boss_max_ranks:
+        for pid in boss_pids_in_scope:
             cd = CharacterData(rom, pid)
-            if cd.jidDefault == final_jid:
+            if cd.jidDefault == 0:
                 continue
-            cd.jidDefault = final_jid
-            jd = ClassData(rom, final_jid)
-            new_ranks = list(cd.baseWexp)
-            changed = False
-            for i in range(8):
-                if jd.baseWexp[i] > 0:
-                    if new_ranks[i] < S_RANK_WEXP:
-                        new_ranks[i] = S_RANK_WEXP
-                        changed = True
-                else:
-                    if new_ranks[i] != 0:
-                        new_ranks[i] = 0
-                        changed = True
-            if changed:
+            ud_classes = boss_ud_classes.get(pid, set())
+            class_changed = False
+            if len(ud_classes) == 1 and cd.jidDefault not in ud_classes:
+                cd.jidDefault = next(iter(ud_classes))
+                class_changed = True
+            classes = {cd.jidDefault} | set(ud_classes)
+            wexps = [ClassData(rom, jid).baseWexp for jid in classes]
+            new_ranks = [S_RANK_WEXP if i in _union_weapon_types(wexps) else 0
+                         for i in range(8)]
+            if new_ranks != cd.baseWexp or class_changed:
                 cd.baseWexp = new_ranks
-            cd.write(rom)
+                cd.write(rom)
 
     return total
 
@@ -3366,7 +3377,11 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
     if enemy_patched:
         _vprint(f"Randomized {enemy_patched} generic enemy unit(s)")
 
-    _sync_shared_pid_classes(rom)
+    _sync_shared_pid_classes(
+        rom,
+        ud_offsets=sorted({off for off, _ in ud_arrays}
+                          | {off for off, _ in ch_ud_arrays}
+                          | {off for off, _ in (sval_s2_arrays or [])}))
 
     class_rules = config.get('class_randomization', {})
     palette_enabled = class_rules.get('palette_mapping', True)
@@ -3376,7 +3391,7 @@ def apply_config(rom_path: str, config: dict, seed: int = None,
         include_bosses = enemy_rules.get('include_bosses', False)
         if enemy_rules.get('enabled', False):
             for pid in range(35, 256):
-                if pid == FINAL_BOSS_PID:
+                if pid == FINAL_BOSS_PID or pid in PLAYER_ONLY_PIDS:
                     continue
                 if not include_bosses and pid in BOSS_PIDS:
                     continue

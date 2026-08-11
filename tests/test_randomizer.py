@@ -28,6 +28,8 @@ from fe8.randomizer import (
     PROMOTION_ITEM_IDS,
     STORY_EXCLUSIVE_ITEM_IDS,
     BALLISTA_ITEM_IDS,
+    PLAYABLE_PLAYABLE_PIDS,
+    PLAYER_ONLY_PIDS,
     _build_loot_pool,
     _distribute_growth_pool,
     _get_con_rules,
@@ -35,7 +37,24 @@ from fe8.randomizer import (
     _randomize_stat,
     _scale_stat,
     _swap_gendered_class,
+    _union_weapon_types,
 )
+
+
+# ---------------------------------------------------------------------------
+# randomizer.py: player-only PID handling
+# ---------------------------------------------------------------------------
+
+class TestPlayerOnlyPids:
+    def test_orson_in_player_pool(self):
+        assert 0x2A in PLAYABLE_PLAYABLE_PIDS
+
+    def test_player_only_pids_subset_of_player_pool(self):
+        assert PLAYER_ONLY_PIDS <= PLAYABLE_PLAYABLE_PIDS
+
+    def test_recruitment_pool_excludes_player_only(self):
+        recruit_pool = PLAYABLE_PLAYABLE_PIDS - PLAYER_ONLY_PIDS
+        assert 0x2A not in recruit_pool
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +251,28 @@ class TestBuildLootPool:
         pool = _build_loot_pool()
         assert all(1 <= item <= 0xBF for item in pool)
         assert 0 not in pool
+
+
+class TestUnionWeaponTypes:
+    def test_empty(self):
+        assert _union_weapon_types([]) == set()
+
+    def test_single_class(self):
+        wexp = [0, 71, 0, 0, 0, 0, 0, 0]
+        assert _union_weapon_types([wexp]) == {1}
+
+    def test_union_across_classes(self):
+        assert _union_weapon_types([
+            [1, 0, 0, 0, 0, 0, 0, 0],
+            [0, 71, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 251],
+        ]) == {0, 1, 7}
+
+    def test_includes_staff(self):
+        assert _union_weapon_types([[0, 0, 0, 0, 251, 0, 0, 0]]) == {4}
+
+    def test_ignores_zero_only_classes(self):
+        assert _union_weapon_types([[0] * 8]) == set()
 
 
 # ---------------------------------------------------------------------------
