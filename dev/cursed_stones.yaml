@@ -1,0 +1,170 @@
+# Sacred Randomizer Configuration
+# ================================
+#
+#   This config file keeps everything vanilla FE8 except for
+#   Generic and Boss unit growth rates and Boss units starting stats
+#   50% chance enemy weapons get upgraded. 
+#   sacred-randomizer ROM.GBA -c dev/harder_stones.yaml --seed 12345
+
+seed: 1  # 0 = random (uses system time); also overridable via --seed
+
+# ---------------------------------------------------------------------------
+# CLASSES
+# ---------------------------------------------------------------------------
+# Shuffles which class each playable character belongs to.
+# Characters keep their original stats unless stat randomization is also enabled.
+class_randomization:
+  mode: false              # 'shuffle' (permute, no repeats) or 'random' (sample with replacement, repeats allowed)
+  manakete_count: 0          # max characters that become Manakete (0 = none)
+  omit_classes: []           # List of JID enum names to exclude, e.g. [NECROMANCER] (case-insensitive)
+  include_soldier: false     # Soldier has no promotion path; excluded from player pools by default
+  include_trainees: true      # true = Ross/Amelia/Ewan restricted to trainee classes; false = any class allowed
+  palette_mapping: false       # Auto-update palette class table to apply custom palettes to new classes
+  portrait_palettes: false     # Generate unique palettes from a character's original colors onto new class templates
+  gender_lock: false          # Lock randomized classes to same gender as character (male/female variants swapped automatically)
+
+# ---------------------------------------------------------------------------
+# GROWTH RATES
+# ---------------------------------------------------------------------------
+# Controls how fast characters gain stats per level-up.
+# Modes: false (keep vanilla), 'shuffle' (reorder existing), 'random' (new values), 'pool' (distribute total)
+# Modes for 'character' / 'class':
+#   false       — keep vanilla
+#   'shuffle'   — reorder existing values
+#   'random'    — new gaussian values (uses mean/stddev)
+#   'pool'      — distribute a total across stats (uses pool_total)
+#   <number>   — scale by factor (class only, e.g. 1.3)
+#   'random_buff' — random fractional buff per stat (class only, uses class_buff_range)
+growth_randomization:
+  character: false            # Per-character growth rates
+  class: 1.0                # 0% buffed growth rates
+  class_buff_range: 0.5        # range for 'random_buff' mode (e.g. 0.3 = stats scaled by 1.0–1.3)
+  min: 0                       # Minimum clamp for all growth modes
+  max: 255                     # Maximum clamp for all growth modes
+  mean: null                   # Mean for 'random' normal distribution (null = use original value)
+  stddev: 30                   # Standard deviation for 'random' normal distribution
+  pool_total: 315              # Total growth pool for 'pool' mode (null = preserve original total)
+
+# ---------------------------------------------------------------------------
+# BASE STATS
+# ---------------------------------------------------------------------------
+# Randomizes starting stats for characters or classes.
+# Modes: false (keep vanilla), 'shuffle' (swap values), 'random' (new values), or a multiplier (e.g. 1.5)
+base_stat_randomization:
+  character: false          # Per-character base stats (HP, Str, Skl, Spd, Def, Res, Luck)
+  class: false             # Per-class base stats (HP, Pow, Skl, Spd, Def, Res, Con, Mov)
+  preserve_base: true        # when class=shuffle: true = swap existing values; false = assign random(0,20)
+  shuffle_con_mov: false      # when class=shuffle: true = include Con/Mov in the swap; false = leave unchanged
+  cross_tier_scramble: false # when class=shuffle: allow swapping across promoted/unpromoted/trainee tiers
+  mean: null                 # Mean for 'random' mode (null = use original stat value)
+  stddev: 3                  # Standard deviation for 'random' mode
+  con:                       # Separate Con randomization; false = preserve Con in ALL modes
+    enabled: false             # false = never modify Con (scale, shuffle, random all skip it)
+    min: 1                   # Minimum Con for class bases
+    player_min: 1            # Minimum Con for player unit bases
+    stddev: 3                # Standard deviation for Con (separate from global stddev)
+
+# ---------------------------------------------------------------------------
+# ITEMS (Weapons + Inventory)
+# ---------------------------------------------------------------------------
+# When classes get shuffled, characters need weapons they can actually use.
+# This is ON by default and strongly recommended if class_randomization.shuffle is true.
+item_randomization:
+  enabled: false              # true = give characters weapons usable by their new class
+  mode: random               # 'random' = pick random usable weapons from pools; 'shuffle' = permute all items
+  randomize_events: false    # true = also randomize items given via GiveItem event commands (slow)
+
+# ---------------------------------------------------------------------------
+# WEAPON STATS (Might / Hit / Weight / Crit)
+# ---------------------------------------------------------------------------
+# Randomizes the numeric stats of all weapons independently.
+weapon_randomization:
+  enabled: false             # false = keep weapon stats as-is; true = randomize all 4 stats
+  might: false                # Per-stat toggle: true = randomize, false = keep original, number = multiplier
+  hit: false
+  weight: false
+  crit: false
+  mean: null                 # Mean for random values (null = use original value)
+  stddev: 5                  # Global standard deviation
+  might_stddev: 3            # Per-stat standard deviation overrides
+  hit_stddev: 20
+  weight_stddev: 3
+  crit_stddev: 5
+  min_might: 1               # Clamp ranges for each stat
+  max_might: 20
+  min_hit: 30
+  max_hit: 120
+  min_weight: 1
+  max_weight: 20
+  min_crit: 0
+  max_crit: 30
+
+# ---------------------------------------------------------------------------
+# WEAPON EFFECTS (Poison / Nosferatu / Eclipse / Devil / Stone)
+# ---------------------------------------------------------------------------
+# Randomly adds special effects to some weapons.
+weapon_effects:
+  enabled: 100              # All weapons are devil
+  poison: 0                # Relative weight for each effect (higher = more likely)
+  nosferatu: 0
+  eclipse: 0
+  devil: 1
+  stone: 0
+  brave: 0                 # Independent per-item % chance to gain Brave (extra attack) — uses attribute bit, not effect pool
+  reaver: 0                # Independent per-item % chance to gain Reaver (reverses weapon triangle) — uses attribute bit
+
+# ---------------------------------------------------------------------------
+# AFFINITIES
+# ---------------------------------------------------------------------------
+# Randomizes each character's support affinity (Fire, Thunder, Wind, etc.).
+affinity_randomization:
+  enabled: false             # true = randomize; keeps valid affinity range (1-7)
+
+# ---------------------------------------------------------------------------
+# PROMOTION ITEMS (Master Seals, Heaven Seals, etc.)
+# ---------------------------------------------------------------------------
+# Makes ALL promotion items behave like Master Seals:
+#   - Any unpromoted class can use them on any character
+#   - Chests, enemy drops, and events only give Master Seals
+# This is ON by default and makes promotion simpler and more flexible.
+promotion_items:
+  enabled: false                          # true = unify all promotion items as Master Seals
+  master_seal_universal: false            # false = restore vanilla per-class promotion restrictions
+  replace_distribution: false             # false = keep original promotion item types in chests/drops/events
+
+# ---------------------------------------------------------------------------
+# ENEMY RANDOMIZATION (Generic Units)
+# ---------------------------------------------------------------------------
+# Randomizes generic enemies on maps, ensuring they have functional classes and weapons.
+# Classes are grouped by movement type so enemies placed in mountains or water
+# can still traverse their starting tiles.
+enemy_randomization:
+  enabled: false                         # true = enable enemy class & weapon randomization
+  randomize_classes: false                # true = randomize generic enemy classes
+  randomize_items: false                  # true = assign weapons compatible with their new class
+  randomize_monster_classes: false       # true = randomize monster enemies into other classes
+  include_monsters: false                # true = allow enemies to randomize into monster classes
+  include_bosses: false                  # true = include BOSS_PIDs (0x40–0x63 etc.) in randomization
+  weapon_upgrade_chance: 00              # percent chance (0-100) a unit's weapon tier is improved
+  omit_classes: []                       # List of JID enum names to exclude, e.g. [SHAMAN, MERCENARY]
+  boss_buffs:                            # Applied only when include_bosses: true
+    growths:
+      mode: 1.0                        # false | <number> | random_buff | random
+      buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
+      mean: null                         # mean for random mode
+      stddev: 10                         # stddev for random mode
+    base_stats:
+      mode: 1.0                        # false | <number> | random_buff | random
+      buff_range: 0.3                    # range for random_buff mode (e.g. 0.3 = stats scaled by 1.0–1.3)
+      mean: null                         # mean for random mode
+      stddev: 3                          # stddev for random mode
+    max_weapon_ranks: false               # max all weapon types the class can use to S-rank
+
+loot_randomization:
+  enabled: false        # true = enable loot randomization
+  mode: random          # 'random' or 'shuffle'
+  # Items excluded from both loot pools and replacement:
+  #   0x7D-0x80, 0xA2-0xA5 — safe-excluded items
+  #   Chest items are not randomized (Location Events scan is disabled
+  #   due to false positives with Always Events / Map Objects).
+  #   See AGENTS.md for the full exclusion list.
